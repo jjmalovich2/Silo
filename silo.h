@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <iostream>
+#include <algorithm>
 
 // --- Token Definitions ---
 enum TokenType {

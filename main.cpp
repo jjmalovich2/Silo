@@ -2,20 +2,49 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <algorithm>
+#include <vector>
 
 // `printSymbolTable()` is defined in AST.cpp; use that implementation.
+
+const std::string COMMANDS[] = {"-dump", "-d", "-v", "-version"};
+bool dumpMode = false;
+const std::string VERSION = "Silo v1.1.352d332d3236-v3_c++17";
+
+void compileCommand(const std::string& cmd) {
+    auto cc = std::find(std::begin(COMMANDS), std::end(COMMANDS), cmd); // compile command
+    if (cc != std::end(COMMANDS)) {
+        if (*cc == "-dump" || *cc == "-d") dumpMode = true;
+        if (*cc == "-v" || *cc == "-version") std::cout << VERSION << std::endl << std::endl;
+    } else {
+        std::cerr << "Unknown command: " << cmd << std::endl;
+        return;
+    }
+}
 
 int main(int argc, char* argv[]) {
     clear(); 
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <source_file>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <source_file> or <power_command>" << std::endl;
         return 1;
+    }
+
+    // check for power commands first
+    if (std::string(argv[1]) == "-v" || std::string(argv[1]) == "-version") {
+        std::cout << VERSION << std::endl;
+        return 0;
     }
 
     std::ifstream file(argv[1]);
     if (!file) {
         std::cerr << "Error: Could not open file " << argv[1] << std::endl;
         return 1;
+    }
+
+    if (argc > 2) {
+        for (int i = 2; i < argc; i++) {
+            compileCommand(argv[i]);
+        }
     }
 
     std::stringstream buffer;
@@ -55,6 +84,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-    printSymbolTable();
+    if (dumpMode) printSymbolTable();
     return 0;
 }

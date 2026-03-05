@@ -13,7 +13,7 @@ struct ReturnException {
 
 // Helper function to debug memory
 void printSymbolTable() {
-    std::cout << "\n=== SYMBOL TABLE DUMP ===\n";
+    std::cout << "\n=== MEMORY DUMP ===\n";
     if (SYMBOL_TABLE.empty()) {
         std::cout << "(Empty)\n";
     } else {
