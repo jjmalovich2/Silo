@@ -62,6 +62,8 @@ Token Lexer::nextToken() {
         if (result == "if") return {TokenType::If, "if"};
         if (result == "else") return {TokenType::Else, "else"};
         if (result == "while") return {TokenType::While, "while"};
+        if (result == "for") return {TokenType::For, "for"};
+        if (result == "do") return {TokenType::DoWhile, "do"};
         
         // "print" is handled as a standard identifier in the Parser, so we don't need a specific token for it here.
         return {TokenType::Identifier, result};

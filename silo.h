@@ -10,9 +10,10 @@
 // --- Token Definitions ---
 enum TokenType {
     // Keywords
-    TypeInt, TypeString, TypeFloat, TypeBool,
-    Return, Print, If, Else, While, True, False,
-    Cast, StaticCast, Free, // Added Free
+    TypeInt, TypeString, TypeFloat, TypeBool, True, False, // types and bools
+    Return, Print, If, Else, // logic and functions
+    While, For, DoWhile, // loops
+    Cast, StaticCast, Free, // memory management
 
     // Identifiers & Literals
     Identifier, Number, StringLiteral,
@@ -44,7 +45,8 @@ enum TokenType {
     Ampersand,      // &
     At,             // @
 
-    EndOfFile
+    EndOfFile,
+    Unknown
 };
 
 struct Token {
@@ -112,7 +114,7 @@ public:
     std::string getName() const { return name; }
 };
 
-// MATH SUPPORT (New)
+// math node
 class BinaryOpNode : public ExprNode {
     std::string op;
     std::unique_ptr<ExprNode> left;
@@ -211,6 +213,41 @@ public:
     void addElseIf(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> block);
     void setElse(std::unique_ptr<BlockNode> block);
     void execute() override;
+};
+
+class WhileNode : public ASTNode {
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<BlockNode> body;
+public:
+    WhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b);
+    void execute() override;
+};
+
+class DoWhileNode : public ASTNode {
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<BlockNode> body;
+public:
+    DoWhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b);
+    void execute() override;
+};
+
+class ForNode : public ASTNode {
+    std::unique_ptr<ASTNode> init;
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<ASTNode> increment;
+    std::unique_ptr<BlockNode> body;
+public:
+    ForNode(std::unique_ptr<ASTNode> i, std::unique_ptr<ExprNode> cond, std::unique_ptr<ASTNode> inc, std::unique_ptr<BlockNode> b);
+    void execute() override;
+};
+
+// for loop helper node
+class AssignExprNode : public ExprNode {
+    std::string varName;
+    std::unique_ptr<ExprNode> value;
+public:
+    AssignExprNode(const std::string& name, std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
 };
 
 class FunctionDefNode : public ASTNode {

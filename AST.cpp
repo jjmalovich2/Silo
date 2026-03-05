@@ -53,7 +53,7 @@ public:
     void execute() override { expr->evaluate(); }
 };
 
-// --- Constructors ---
+// constructors
 NumberLiteralNode::NumberLiteralNode(const std::string& val) : value(val) {}
 StringLiteralNode::StringLiteralNode(const std::string& val) : value(val) {}
 BooleanLiteralNode::BooleanLiteralNode(bool val) : value(val) {}
@@ -68,15 +68,14 @@ PrintNode::PrintNode(std::unique_ptr<ExprNode> expr) : expression(std::move(expr
 ReturnNode::ReturnNode(std::unique_ptr<ExprNode> v) : value(std::move(v)) {}
 FunctionDefNode::FunctionDefNode(const std::string& rt, const std::string& n, const std::vector<std::pair<std::string, std::string>> p, std::unique_ptr<BlockNode> b) : returnType(rt), name(n), params(p), body(std::move(b)) {}
 FreeNode::FreeNode(const std::string& id) : identifier(id) {}
-IfNode::IfNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> thenB) 
-    : condition(std::move(cond)), thenBlock(std::move(thenB)), elseBlock(nullptr) {}
-void IfNode::addElseIf(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> block) {
-    elseIfBlocks.push_back({std::move(cond), std::move(block)});
-}
-void IfNode::setElse(std::unique_ptr<BlockNode> block) {
-    elseBlock = std::move(block);
-}
+IfNode::IfNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> thenB) : condition(std::move(cond)), thenBlock(std::move(thenB)), elseBlock(nullptr) {}
+void IfNode::addElseIf(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> block) { elseIfBlocks.push_back({std::move(cond), std::move(block)}); }
+void IfNode::setElse(std::unique_ptr<BlockNode> block) { elseBlock = std::move(block); }
 BinaryOpNode::BinaryOpNode(std::string o, std::unique_ptr<ExprNode> l, std::unique_ptr<ExprNode> r) : op(o), left(std::move(l)), right(std::move(r)) {}
+WhileNode::WhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b) : condition(std::move(cond)), body(std::move(b)) {}
+DoWhileNode::DoWhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b) : condition(std::move(cond)), body(std::move(b)) {}
+ForNode::ForNode(std::unique_ptr<ASTNode> i, std::unique_ptr<ExprNode> cond, std::unique_ptr<ASTNode> inc, std::unique_ptr<BlockNode> b) : init(std::move(i)), condition(std::move(cond)), increment(std::move(inc)), body(std::move(b)) {}
+AssignExprNode::AssignExprNode(const std::string& name, std::unique_ptr<ExprNode> val) : varName(name), value(std::move(val)) {}
 
 // --- Evaluators ---
 std::string NumberLiteralNode::evaluate() const { return value; }
@@ -266,6 +265,37 @@ void IfNode::execute() {
         elseBlock->execute();
     }
 }
+
+void WhileNode::execute() {
+    while (condition->evaluate() != "0") {
+        body->execute();
+    }
+}
+
+void DoWhileNode::execute() {
+    do {
+        body->execute();
+    } while (condition->evaluate() != "0");
+}
+
+void ForNode::execute() {
+    if (init) init->execute();
+    while (condition->evaluate() != "0") {
+        body->execute();
+        if (increment) increment->execute();
+    }
+}
+
+std::string AssignExprNode::evaluate() const {
+    std::string result = value->evaluate();
+    if (SYMBOL_TABLE.find(varName) != SYMBOL_TABLE.end()) {
+        SYMBOL_TABLE[varName].value = result;
+    } else {
+        std::cerr << "Runtime Error: Variable '" << varName << "' not declared\n";
+    }
+    return result;
+}
+
 void ReturnNode::execute() { throw ReturnException{value ? value->evaluate() : "0"}; }
 void PrintNode::execute() { std::cout << expression->evaluate() << "\n"; }
 
@@ -421,6 +451,8 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         consume(TokenType::Semicolon, ";");
         return std::make_unique<PrintNode>(std::move(e));
     }
+
+    // if statements
     if (t.type == TokenType::If) {
         advance();
         consume(TokenType::LeftParen, "(");
@@ -447,6 +479,46 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         }
         return ifNode;
     }
+
+    // Loop constructs (while, do-while, for)
+    if (t.type == TokenType::While) {
+        advance();
+        consume(TokenType::LeftParen, "(");
+        auto cond = parseLogicalOr();
+        consume(TokenType::RightParen, ")");
+        auto body = parseBlock();
+        return std::make_unique<WhileNode>(std::move(cond), std::move(body));
+    }
+    if (t.type == TokenType::DoWhile) {
+        advance();
+        auto body = parseBlock();
+        consume(TokenType::While, "Expected 'while' after do-block");
+        consume(TokenType::LeftParen, "(");
+        auto cond = parseLogicalOr();
+        consume(TokenType::RightParen, ")");
+        consume(TokenType::Semicolon, ";");
+        return std::make_unique<DoWhileNode>(std::move(cond), std::move(body));
+    }
+    if (t.type == TokenType::For) {
+        advance();
+        consume(TokenType::LeftParen, "(");
+        auto init = parseStatement();
+        auto cond = parseLogicalOr();
+        consume(TokenType::Semicolon, ";");
+        
+        std::unique_ptr<ExprNode> inc;
+        if (peek().type == TokenType::Identifier) {
+            std::string varName = advance().value;
+            consume(TokenType::Equals, "=");
+            auto val = parseLogicalOr();
+            inc = std::make_unique<AssignExprNode>(varName, std::move(val));
+        }
+
+        consume(TokenType::RightParen, ")");
+        auto block = parseBlock();
+        return std::make_unique<ForNode>(std::move(init), std::move(cond), std::move(inc), std::move(block));
+    }
+
     // Type Declarations (int, string, float, bool)
     if (t.type == TokenType::TypeInt || t.type == TokenType::TypeString || t.type == TokenType::TypeFloat || t.type == TokenType::TypeBool) {
         std::string type = t.value;
