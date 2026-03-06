@@ -368,6 +368,24 @@ InstanceCreateNode::InstanceCreateNode(const std::string& cls, const std::string
                                        std::vector<std::unique_ptr<ExprNode>> a)
     : className(cls), instanceName(inst), args(std::move(a)) {}
 
+CastExprNode::CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e)
+    : targetType(t), expr(std::move(e)) {}
+
+std::string CastExprNode::evaluate() const {
+    std::string val = expr->evaluate();
+    if (targetType.find("int") != std::string::npos) {
+        try { return std::to_string((int)std::stod(val)); } catch (...) { return "0"; }
+    }
+    if (targetType.find("string") != std::string::npos) {
+        return val;
+    }
+    if (targetType.find("float") != std::string::npos ||
+        targetType.find("double") != std::string::npos) {
+        try { return formatNum(std::stod(val)); } catch (...) { return "0.0"; }
+    }
+    return val;
+}
+
 // =====================================================================
 // EXPRESSION EVALUATORS
 // =====================================================================
@@ -551,8 +569,7 @@ std::string FunctionCallNode::evaluate() const {
             auto vit = SYMBOL_TABLE.find(vn->getName());
             if (vit != SYMBOL_TABLE.end()) { argTypes.push_back(vit->second.type); continue; }
         }
-        std::string val = argValues.back();
-        argTypes.push_back(val.find('.') != std::string::npos ? "float" : "int");
+        argTypes.push_back("unknown");
     }
 
     RuntimeValue func = it->second;
@@ -922,14 +939,11 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
         while (peek().type != TokenType::GreaterThan) type += advance().value;
         consume(TokenType::GreaterThan, ">");
         consume(TokenType::LeftParen, "(");
-        if (peek().type == TokenType::Ampersand) advance();
-        std::string var = consume(TokenType::Identifier, "Var").value;
-        if (peek().type == TokenType::Dot) {
-            advance();
-            var += "." + consume(TokenType::Identifier, "Field name").value;
-        }
+        // Parse a full expression instead of just an identifier
+        auto inner = parseLogicalOr();
         consume(TokenType::RightParen, ")");
-        return std::make_unique<CastOrRefNode>(type, var);
+        // Wrap in a helper node that casts the result of any expression
+        return std::make_unique<CastExprNode>(type, std::move(inner));
     }
 
     if (t.type == TokenType::Self) {
@@ -1317,25 +1331,14 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
     if (t.type == TokenType::Identifier) {
         // Detect class instantiation: ClassName varName(args);
         if (position + 1 < tokens.size() &&
-            tokens[position + 1].type == TokenType::Identifier &&
-            position + 2 < tokens.size() &&
-            tokens[position + 2].type == TokenType::LeftParen) {
-            auto sit = SYMBOL_TABLE.find(t.value);
-            if (sit != SYMBOL_TABLE.end() && sit->second.type == "class") {
-                std::string cls  = advance().value;
-                std::string inst = advance().value;
-                consume(TokenType::LeftParen, "(");
-                std::vector<std::unique_ptr<ExprNode>> iargs;
-                if (peek().type != TokenType::RightParen) {
-                    do {
-                        if (peek().type == TokenType::Comma) advance();
-                        iargs.push_back(parseLogicalOr());
-                    } while (peek().type == TokenType::Comma);
-                }
-                consume(TokenType::RightParen, ")");
-                consume(TokenType::Semicolon, ";");
-                return std::make_unique<InstanceCreateNode>(cls, inst, std::move(iargs));
-            }
+            tokens[position + 1].type == TokenType::Equals) {
+            std::string varName = advance().value; // consume name
+            advance();                             // consume =
+            auto val = parseLogicalOr();
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<AssignExprNode>(varName, std::move(val))
+            );
         }
         auto e = parseLogicalOr();
         consume(TokenType::Semicolon, ";");

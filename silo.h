@@ -203,6 +203,14 @@ public:
     std::string evaluate() const override;
 };
 
+class CastExprNode : public ExprNode {
+    std::string targetType;
+    std::unique_ptr<ExprNode> expr;
+public:
+    CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e);
+    std::string evaluate() const override;
+};
+
 class ArrayAccessNode : public ExprNode {
     std::string arrayName;
     int index;
