@@ -69,7 +69,17 @@ static bool isNumeric(const std::string& s) {
 static std::string formatNum(double v) {
     if (v == (long long)v)
         return std::to_string((long long)v);
-    return std::to_string(v);
+    // Remove trailing zeros
+    std::string s = std::to_string(v);
+    size_t dot = s.find('.');
+    if (dot != std::string::npos) {
+        size_t last = s.find_last_not_of('0');
+        if (last != std::string::npos && last > dot)
+            s = s.substr(0, last + 1);
+        else if (last == dot)
+            s = s.substr(0, dot); // whole number, drop decimal entirely
+    }
+    return s;
 }
 
 // =====================================================================

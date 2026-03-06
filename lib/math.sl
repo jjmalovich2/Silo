@@ -1,3 +1,6 @@
+double PI = 3.14159265358979;
+double E  = 2.71828182845904;
+
 double abs(double val) {
     if (val < 0) { return val - val - val; }
     return val;
@@ -66,7 +69,82 @@ double min(double n1, double n2) {
 }
 
 double round(double val, int dec) {
-    int temp = 10 * dec;
+    double factor = exp(10, dec);
+    int shifted = cast<int>(val * factor + 0.5);
+    return shifted / factor;
+}
 
-    return (val * temp) / temp;
+int floor(double v) {
+    return cast<int>(v);
+}
+
+int ceil(double v) {
+    return cast<int>(v+1);
+}
+
+int sign(double v) {
+    if (v < 0) {
+        return -1;
+    } else if (v == 0) {
+        return 0;
+    } else {
+        return 1;
+    }
+}
+
+bool isEven(int n) {
+    return (n % 2 == 0);
+}
+
+bool isOdd(int n) {
+    return !(n % 2 == 0);
+}
+
+double log(double x) {
+    return exp(E, x);
+}
+
+double log10(double x) {
+    return log(x) / log(10);
+}
+
+int factorial(int n) {
+    int result = n;
+    for (int i = n-1; i > 0; i--;) {
+        result = result * (n-i);
+    }
+}
+
+double toRadians(double deg) {
+    return deg * (PI / 180.0);
+}
+
+double sin(double x) {
+    double result = 0.0;
+    double term = x;
+    int sign = 1;
+
+    for (int i = 1; i < 20; i++) {
+        result = result + sign * term;
+        term = term * x * x / ((2 * i) * (2 * i + 1));
+        sign = sign - sign - sign;
+    }
+    return result;
+}
+
+double cos(double x) {
+    double result = 1.0;
+    double term = 1.0;
+    int sign = -1;
+
+    for (int i = 1; i < 20; i++) {
+        term = term * x * x / ((2 * i -1) * (2 * i));
+        result = result + sign * term;
+        sign = sign - sign - sign;
+    }
+    return result;
+}
+
+double tan(double x) {
+    return sin(x) / cos(x);
 }
