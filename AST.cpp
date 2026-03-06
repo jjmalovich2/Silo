@@ -3,6 +3,7 @@
 #include <sstream>
 #include <cmath>
 #include <stdexcept>
+#include <set>
 
 // =====================================================================
 // GLOBALS
@@ -120,6 +121,27 @@ static void reapplyGlobals(
     }
 }
 
+static void clearOuterLocals(const std::string& className) {
+    std::set<std::string> globals;
+    std::string cls = className;
+    while (!cls.empty()) {
+        auto it = SYMBOL_TABLE.find(cls);
+        if (it == SYMBOL_TABLE.end()) break;
+        for (auto& kv : it->second.fields)
+            if (kv.second.access == "global") globals.insert(kv.first);
+        cls = it->second.parentClass;
+    }
+    for (auto it = SYMBOL_TABLE.begin(); it != SYMBOL_TABLE.end(); ) {
+        const std::string& type = it->second.type;
+        bool keep = (type == "class" ||
+                     type.compare(0, 9, "instance:") == 0 ||
+                     type == "function" ||
+                     globals.count(it->first) > 0);
+        if (!keep) it = SYMBOL_TABLE.erase(it);
+        else        ++it;
+    }
+}
+
 // =====================================================================
 // INSTANCE FIELD ACCESS
 // =====================================================================
@@ -210,39 +232,44 @@ static std::string callMethod(const std::string& instName,
 
     std::string className = iit->second.instanceOf;
 
-    MethodDef* method = nullptr;
+    // Find method — walk class hierarchy
+    MethodDef* methodPtr = nullptr;
     std::string searchClass = className;
     while (!searchClass.empty()) {
         auto it = SYMBOL_TABLE.find(searchClass);
         if (it == SYMBOL_TABLE.end()) break;
         auto mit = it->second.methods.find(methodName);
         if (mit != it->second.methods.end()) {
-            method = &mit->second;
+            methodPtr = &mit->second;
             break;
         }
         searchClass = it->second.parentClass;
     }
-    if (!method)
+    if (!methodPtr)
         throw std::runtime_error("Method '" + methodName +
                                  "' not found on class " + className);
+
+    // COPY by value — the pointer becomes dangling after SYMBOL_TABLE = prevSymbols
+    MethodDef method = *methodPtr;
 
     std::string outerClass    = CURRENT_CLASS;
     std::string outerInstance = CURRENT_INSTANCE;
 
-    // 1. Inject globals BEFORE snapshot
+    // 1. Inject globals
     injectGlobals(className);
-
-    // 2. Snapshot
+    // 2. Clear leaked outer locals so inner methods get a clean scope
+    clearOuterLocals(className);
+    // 3. Snapshot clean state
     auto prevSymbols = SYMBOL_TABLE;
 
-    // 3. Set context
+    // 4. Set context
     CURRENT_CLASS    = className;
     CURRENT_INSTANCE = instName;
 
-    // 4. Bind parameters
-    for (size_t i = 0; i < method->params.size() && i < argVals.size(); i++) {
-        const std::string& pname = method->params[i].second;
-        const std::string& ptype = method->params[i].first;
+    // 5. Bind parameters
+    for (size_t i = 0; i < method.params.size() && i < argVals.size(); i++) {
+        const std::string& pname = method.params[i].second;
+        const std::string& ptype = method.params[i].first;
         if (ptype != argTypes[i] && argTypes[i] != "unknown") {
             SYMBOL_TABLE     = prevSymbols;
             CURRENT_CLASS    = outerClass;
@@ -253,23 +280,19 @@ static std::string callMethod(const std::string& instName,
         SYMBOL_TABLE[pname] = {ptype, argVals[i]};
     }
 
-    // 5. Execute
+    // 6. Execute
     std::string result = "0";
     try {
-        if (method->body) method->body->execute();
+        if (method.body) method.body->execute();
     } catch (const ReturnException& ret) {
         result = ret.value;
     }
 
-    // 6. Capture globals before restore
+    // 7. Capture globals, restore, reapply
     auto globalUpdates = captureGlobals(className);
-
-    // 7. Restore scope, preserve instance field changes
     RuntimeValue updatedInst = SYMBOL_TABLE[instName];
     SYMBOL_TABLE = prevSymbols;
     SYMBOL_TABLE[instName] = updatedInst;
-
-    // 8. Reapply globals
     reapplyGlobals(globalUpdates);
 
     CURRENT_CLASS    = outerClass;
@@ -383,10 +406,29 @@ std::string FStringNode::evaluate() const {
                     result += getInstanceField(inst, member, CURRENT_CLASS);
             } else {
                 auto it = SYMBOL_TABLE.find(expr);
-                if (it != SYMBOL_TABLE.end())
+                if (it != SYMBOL_TABLE.end()) {
                     result += it->second.value;
-                else
+                } else if (!CURRENT_INSTANCE.empty()) {
+                    // Check instance fields
+                    auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
+                    if (iit != SYMBOL_TABLE.end()) {
+                        auto fit = iit->second.fields.find(expr);
+                        if (fit != iit->second.fields.end()) {
+                            result += fit->second.value;
+                        } else {
+                            std::string cls = iit->second.instanceOf;
+                            auto cit = SYMBOL_TABLE.find(cls);
+                            if (cit != SYMBOL_TABLE.end()) {
+                                auto gfit = cit->second.fields.find(expr);
+                                if (gfit != cit->second.fields.end())
+                                    result += gfit->second.value;
+                                else result += expr;
+                            } else result += expr;
+                        }
+                    } else result += expr;
+                } else {
                     result += expr;
+                }
             }
         }
     }
@@ -396,6 +438,25 @@ std::string FStringNode::evaluate() const {
 std::string VariableNode::evaluate() const {
     auto it = SYMBOL_TABLE.find(name);
     if (it != SYMBOL_TABLE.end()) return it->second.value;
+
+    // Fallback: check instance fields when inside a class method/constructor
+    if (!CURRENT_INSTANCE.empty()) {
+        auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
+        if (iit != SYMBOL_TABLE.end()) {
+            // Check instance fields
+            auto fit = iit->second.fields.find(name);
+            if (fit != iit->second.fields.end())
+                return fit->second.value;
+            // Check global fields on the class definition
+            std::string cls = iit->second.instanceOf;
+            auto cit = SYMBOL_TABLE.find(cls);
+            if (cit != SYMBOL_TABLE.end()) {
+                auto gfit = cit->second.fields.find(name);
+                if (gfit != cit->second.fields.end() && gfit->second.access == "global")
+                    return gfit->second.value;
+            }
+        }
+    }
     return "0";
 }
 
@@ -693,7 +754,7 @@ void InstanceCreateNode::execute() {
     auto ctorIt = cit->second.methods.find(className);
     if (ctorIt == cit->second.methods.end()) return;
 
-    MethodDef& ctor = ctorIt->second;
+    MethodDef ctor = ctorIt->second;
 
     std::vector<std::string> argVals;
     for (auto& a : args) argVals.push_back(a->evaluate());
@@ -710,7 +771,7 @@ void InstanceCreateNode::execute() {
         if (pcit != SYMBOL_TABLE.end()) {
             auto pmit = pcit->second.methods.find(parentCls);
             if (pmit != pcit->second.methods.end()) {
-                MethodDef& parentCtor = pmit->second;
+                MethodDef parentCtor = pmit->second;
 
                 std::vector<std::string> parentArgVals;
                 for (const std::string& argName : ctor.parentConstructorArgs) {

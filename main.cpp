@@ -9,7 +9,7 @@
 
 const std::string COMMANDS[] = {"-dump", "-d", "-v", "-version"};
 bool dumpMode = false;
-const std::string VERSION = "Silo v1.1.352d332d3236-v4_c++17";
+const std::string VERSION = "Silo v1.2.Pisces~first-v1_c++17";
 
 void compileCommand(const std::string& cmd) {
     auto cc = std::find(std::begin(COMMANDS), std::end(COMMANDS), cmd); // compile command
