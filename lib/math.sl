@@ -148,3 +148,24 @@ double cos(double x) {
 double tan(double x) {
     return sin(x) / cos(x);
 }
+
+int gcd(int a, int b) {
+    if (a < 0) { a = cast<int>(abs(a)); }
+    if (b < 0) { b = cast<int>(abs(b)); }
+
+    while (b != 0) {
+        int temp = b;
+        b = a % b;
+        a = temp;
+    }
+    return a;
+}
+
+int lcm(int a, int b) {
+    return (a / gcd(a, b)) * b;
+}
+
+double lerp(double a, double b, double t) {
+    return a * t * (b - a);
+}
+
