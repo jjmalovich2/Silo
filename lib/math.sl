@@ -48,3 +48,25 @@ double sqrt(double val) {
     }
     return guess;
 }
+
+double max(double n1, double n2) {
+    if (n1 >= n2) {
+        return n1;
+    } else {
+        return n2;
+    }
+}
+
+double min(double n1, double n2) {
+    if (n1 <= n2) {
+        return n1;
+    } else {
+        return n2;
+    }
+}
+
+double round(double val, int dec) {
+    int temp = 10 * dec;
+
+    return (val * temp) / temp;
+}

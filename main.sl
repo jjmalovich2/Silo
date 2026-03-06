@@ -1,3 +1,6 @@
-#include <math>
+#include "lib/math.sl"
 
-print(cast<string>(sqrt(67)));
+double num = sqrt(78764);
+double rnum = round(num, 2);
+
+print(rnum);
