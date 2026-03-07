@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <memory>
 #include <iostream>
 #include <functional>
@@ -17,6 +18,7 @@ enum TokenType {
     Cast, StaticCast, Free,
     Class, Constructor, Private, Protected, Global, Void,
     Self,
+    Struct, Const,
 
     // Identifiers & Literals
     Identifier, Number, StringLiteral, FStringLiteral,
@@ -65,11 +67,12 @@ struct Token {
 struct ASTNode;
 class BlockNode;
 
-// --- Field definition for class members ---
+// --- Field definition for class/struct members ---
 struct FieldDef {
-    std::string access;  // "private", "protected", "global", "public"
+    std::string access;   // "private", "protected", "global", "public"
     std::string type;
     std::string value;
+    bool isConst = false; // const fields cannot be reassigned
 };
 
 // --- Method definition for class members ---
@@ -88,8 +91,9 @@ struct MethodDef {
 
 // --- Runtime Value ---
 struct RuntimeValue {
-    std::string type;   // "int", "string", "float", "bool", "class", "instance", "void", etc.
+    std::string type;   // "int", "string", "float", "bool", "class", "struct", "instance:X", "function", etc.
     std::string value;
+    bool isConst = false; // const variables cannot be reassigned
     std::vector<std::string> arrayElements;
 
     // For plain functions
@@ -107,8 +111,8 @@ struct RuntimeValue {
 extern std::map<std::string, RuntimeValue> SYMBOL_TABLE;
 
 // Current execution context (class name we're inside, instance name)
-extern std::string CURRENT_CLASS;    // class being executed in (for access checks)
-extern std::string CURRENT_INSTANCE; // instance name currently executing
+extern std::string CURRENT_CLASS;
+extern std::string CURRENT_INSTANCE;
 
 void printSymbolTable();
 void clear();
@@ -186,7 +190,7 @@ public:
     std::string evaluate() const override;
 };
 
-// Assignment as expression: used in for-loop increment (i = i + 1)
+// Assignment as expression: varName = expr
 class AssignExprNode : public ExprNode {
     std::string varName;
     std::unique_ptr<ExprNode> value;
@@ -195,6 +199,7 @@ public:
     std::string evaluate() const override;
 };
 
+// Legacy cast: cast<type>(varName) or @varName
 class CastOrRefNode : public ExprNode {
     std::string operation;
     std::string targetVar;
@@ -203,6 +208,7 @@ public:
     std::string evaluate() const override;
 };
 
+// Full expression cast: cast<type>(anyExpr) — e.g. cast<string>(sqrt(67))
 class CastExprNode : public ExprNode {
     std::string targetType;
     std::unique_ptr<ExprNode> expr;
@@ -263,11 +269,12 @@ public:
 class VarDeclarationNode : public ASTNode {
     std::string baseType;
     bool isPointer;
+    bool isConst;
     std::string identifier;
     std::unique_ptr<ExprNode> initializer;
 public:
-    VarDeclarationNode(const std::string& t, bool p, const std::string& id,
-                       std::unique_ptr<ExprNode> init);
+    VarDeclarationNode(const std::string& t, bool p, bool c,
+                       const std::string& id, std::unique_ptr<ExprNode> init);
     void execute() override;
 };
 
@@ -373,6 +380,15 @@ public:
     void execute() override;
 };
 
+// Defines a struct (named set of const/non-const fields, instantiated immediately)
+class StructDefNode : public ASTNode {
+    std::string structName;
+    std::map<std::string, FieldDef> fields;
+public:
+    StructDefNode(const std::string& name, std::map<std::string, FieldDef> f);
+    void execute() override;
+};
+
 // Creates an instance: Vehicle honda("12345", 94.5, "Honda");
 class InstanceCreateNode : public ASTNode {
     std::string className;
@@ -415,7 +431,6 @@ class Parser {
     Token advance();
     Token consume(TokenType type, const std::string& err);
 
-    // Returns the type string from a type keyword token
     std::string parseTypeName();
 
 public:
@@ -432,6 +447,7 @@ public:
     std::unique_ptr<BlockNode> parseBlock();
     std::unique_ptr<ASTNode>   parseStatement();
     std::unique_ptr<ASTNode>   parseClassDef();
+    std::unique_ptr<ASTNode>   parseStructDef();
 };
 
 #endif

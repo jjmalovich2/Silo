@@ -3,7 +3,6 @@
 #include <sstream>
 #include <cmath>
 #include <stdexcept>
-#include <set>
 
 // =====================================================================
 // GLOBALS
@@ -34,6 +33,8 @@ void printSymbolTable() {
                 std::cout << " | Instance of: " << val.instanceOf;
             else if (val.type == "class")
                 std::cout << " | [Class]";
+            else if (val.type == "struct")
+                std::cout << " | [Struct]";
             else if (!val.params.empty() || val.body)
                 std::cout << " | [Function]";
             else if (!val.arrayElements.empty()) {
@@ -77,16 +78,13 @@ static std::string formatNum(double v) {
         if (last != std::string::npos && last > dot)
             s = s.substr(0, last + 1);
         else if (last == dot)
-            s = s.substr(0, dot); // whole number, drop decimal entirely
+            s = s.substr(0, dot);
     }
     return s;
 }
 
 // =====================================================================
 // GLOBAL FIELD INJECT / CAPTURE / REAPPLY
-// These three helpers let constructor and method bodies read/write
-// global fields by plain name (e.g. numOfCars++) while keeping the
-// authoritative values on the class definition in SYMBOL_TABLE.
 // =====================================================================
 
 static void injectGlobals(const std::string& className) {
@@ -131,6 +129,8 @@ static void reapplyGlobals(
     }
 }
 
+// Removes local variables leaked from outer scopes, keeping only
+// classes, structs, instances, functions, and injected globals.
 static void clearOuterLocals(const std::string& className) {
     std::set<std::string> globals;
     std::string cls = className;
@@ -144,6 +144,7 @@ static void clearOuterLocals(const std::string& className) {
     for (auto it = SYMBOL_TABLE.begin(); it != SYMBOL_TABLE.end(); ) {
         const std::string& type = it->second.type;
         bool keep = (type == "class" ||
+                     type == "struct" ||
                      type.compare(0, 9, "instance:") == 0 ||
                      type == "function" ||
                      globals.count(it->first) > 0);
@@ -259,7 +260,7 @@ static std::string callMethod(const std::string& instName,
         throw std::runtime_error("Method '" + methodName +
                                  "' not found on class " + className);
 
-    // COPY by value — the pointer becomes dangling after SYMBOL_TABLE = prevSymbols
+    // Copy by value — prevents dangling reference after SYMBOL_TABLE = prevSymbols
     MethodDef method = *methodPtr;
 
     std::string outerClass    = CURRENT_CLASS;
@@ -331,9 +332,10 @@ StringLiteralNode::StringLiteralNode(const std::string& val) : value(val) {}
 BooleanLiteralNode::BooleanLiteralNode(bool val) : value(val) {}
 VariableNode::VariableNode(const std::string& n) : name(n) {}
 CastOrRefNode::CastOrRefNode(const std::string& op, const std::string& var) : operation(op), targetVar(var) {}
+CastExprNode::CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e) : targetType(t), expr(std::move(e)) {}
 ArrayAccessNode::ArrayAccessNode(const std::string& name, int idx) : arrayName(name), index(idx) {}
 FunctionCallNode::FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a) : funcName(name), args(std::move(a)) {}
-VarDeclarationNode::VarDeclarationNode(const std::string& t, bool p, const std::string& id, std::unique_ptr<ExprNode> init) : baseType(t), isPointer(p), identifier(id), initializer(std::move(init)) {}
+VarDeclarationNode::VarDeclarationNode(const std::string& t, bool p, bool c, const std::string& id, std::unique_ptr<ExprNode> init) : baseType(t), isPointer(p), isConst(c), identifier(id), initializer(std::move(init)) {}
 ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::string& n, int s) : type(t), name(n), size(s) {}
 RetypeNode::RetypeNode(const std::string& t, const std::string& v) : newType(t), targetVar(v) {}
 PrintNode::PrintNode(std::unique_ptr<ExprNode> expr) : expression(std::move(expr)) {}
@@ -378,23 +380,8 @@ InstanceCreateNode::InstanceCreateNode(const std::string& cls, const std::string
                                        std::vector<std::unique_ptr<ExprNode>> a)
     : className(cls), instanceName(inst), args(std::move(a)) {}
 
-CastExprNode::CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e)
-    : targetType(t), expr(std::move(e)) {}
-
-std::string CastExprNode::evaluate() const {
-    std::string val = expr->evaluate();
-    if (targetType.find("int") != std::string::npos) {
-        try { return std::to_string((int)std::stod(val)); } catch (...) { return "0"; }
-    }
-    if (targetType.find("string") != std::string::npos) {
-        return val;
-    }
-    if (targetType.find("float") != std::string::npos ||
-        targetType.find("double") != std::string::npos) {
-        try { return formatNum(std::stod(val)); } catch (...) { return "0.0"; }
-    }
-    return val;
-}
+StructDefNode::StructDefNode(const std::string& name, std::map<std::string, FieldDef> f)
+    : structName(name), fields(std::move(f)) {}
 
 // =====================================================================
 // EXPRESSION EVALUATORS
@@ -433,11 +420,12 @@ std::string FStringNode::evaluate() const {
                 if (it != SYMBOL_TABLE.end())
                     result += getInstanceField(inst, member, CURRENT_CLASS);
             } else {
+                // Check flat SYMBOL_TABLE first
                 auto it = SYMBOL_TABLE.find(expr);
                 if (it != SYMBOL_TABLE.end()) {
                     result += it->second.value;
                 } else if (!CURRENT_INSTANCE.empty()) {
-                    // Check instance fields
+                    // Fall back to instance fields
                     auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
                     if (iit != SYMBOL_TABLE.end()) {
                         auto fit = iit->second.fields.find(expr);
@@ -471,11 +459,9 @@ std::string VariableNode::evaluate() const {
     if (!CURRENT_INSTANCE.empty()) {
         auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
         if (iit != SYMBOL_TABLE.end()) {
-            // Check instance fields
             auto fit = iit->second.fields.find(name);
             if (fit != iit->second.fields.end())
                 return fit->second.value;
-            // Check global fields on the class definition
             std::string cls = iit->second.instanceOf;
             auto cit = SYMBOL_TABLE.find(cls);
             if (cit != SYMBOL_TABLE.end()) {
@@ -502,9 +488,28 @@ std::string PostfixOpNode::evaluate() const {
 }
 
 std::string AssignExprNode::evaluate() const {
-    std::string result = value->evaluate();
+    // Enforce const
     auto it = SYMBOL_TABLE.find(varName);
-    if (it != SYMBOL_TABLE.end()) it->second.value = result;
+    if (it != SYMBOL_TABLE.end() && it->second.isConst)
+        throw std::runtime_error("Cannot reassign const variable: " + varName);
+
+    std::string result = value->evaluate();
+    if (it != SYMBOL_TABLE.end()) {
+        it->second.value = result;
+    } else if (!CURRENT_INSTANCE.empty()) {
+        // Try to write to an instance field
+        auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
+        if (iit != SYMBOL_TABLE.end()) {
+            auto fit = iit->second.fields.find(varName);
+            if (fit != iit->second.fields.end()) {
+                fit->second.value = result;
+                return result;
+            }
+        }
+        SYMBOL_TABLE[varName] = {"auto", result};
+    } else {
+        SYMBOL_TABLE[varName] = {"auto", result};
+    }
     return result;
 }
 
@@ -553,10 +558,24 @@ std::string CastOrRefNode::evaluate() const {
         try { return std::to_string((int)std::stod(currentValStr)); } catch (...) { return "0"; }
     }
     if (operation.find("string") != std::string::npos) return currentValStr;
-    if (operation.find("float")  != std::string::npos) {
-        try { return formatNum(std::stod(currentValStr)); } catch (...) { return "0.0"; }
+    if (operation.find("float")  != std::string::npos ||
+        operation.find("double") != std::string::npos) {
+        try { return formatNum(std::stod(currentValStr)); } catch (...) { return "0"; }
     }
     return currentValStr;
+}
+
+std::string CastExprNode::evaluate() const {
+    std::string val = expr->evaluate();
+    if (targetType.find("int")    != std::string::npos) {
+        try { return std::to_string((int)std::stod(val)); } catch (...) { return "0"; }
+    }
+    if (targetType.find("string") != std::string::npos) return val;
+    if (targetType.find("float")  != std::string::npos ||
+        targetType.find("double") != std::string::npos) {
+        try { return formatNum(std::stod(val)); } catch (...) { return "0"; }
+    }
+    return val;
 }
 
 std::string ArrayAccessNode::evaluate() const {
@@ -574,11 +593,7 @@ std::string FunctionCallNode::evaluate() const {
     std::vector<std::string> argValues, argTypes;
     for (auto& arg : args) {
         argValues.push_back(arg->evaluate());
-        const VariableNode* vn = dynamic_cast<const VariableNode*>(arg.get());
-        if (vn) {
-            auto vit = SYMBOL_TABLE.find(vn->getName());
-            if (vit != SYMBOL_TABLE.end()) { argTypes.push_back(vit->second.type); continue; }
-        }
+        // Always use "unknown" so numeric literals pass type checks
         argTypes.push_back("unknown");
     }
 
@@ -649,6 +664,13 @@ std::string MemberAccessNode::evaluate() const {
 
     RuntimeValue& inst = iit->second;
 
+    // Struct field access
+    if (inst.type == "struct") {
+        auto fit = inst.fields.find(memberName);
+        if (fit != inst.fields.end()) return fit->second.value;
+        throw std::runtime_error("Field '" + memberName + "' not found on struct " + instanceName);
+    }
+
     if (inst.type == "class") {
         auto fit = inst.fields.find(memberName);
         if (fit != inst.fields.end()) return fit->second.value;
@@ -658,17 +680,8 @@ std::string MemberAccessNode::evaluate() const {
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
         for (auto& a : callArgs) {
-            std::string val = a->evaluate();
-            argVals.push_back(val);
-            const VariableNode* vn = dynamic_cast<const VariableNode*>(a.get());
-            if (vn) {
-                auto vit = SYMBOL_TABLE.find(vn->getName());
-                if (vit != SYMBOL_TABLE.end()) { argTypes.push_back(vit->second.type); continue; }
-            }
-            if      (val == "0" || val == "1")                        argTypes.push_back("bool");
-            else if (isNumeric(val) && val.find('.') != std::string::npos) argTypes.push_back("float");
-            else if (isNumeric(val))                                   argTypes.push_back("int");
-            else                                                       argTypes.push_back("string");
+            argVals.push_back(a->evaluate());
+            argTypes.push_back("unknown");
         }
         return callMethod(instanceName, memberName, argVals, argTypes);
     }
@@ -688,8 +701,16 @@ std::string MemberAccessNode::evaluate() const {
 // =====================================================================
 
 void VarDeclarationNode::execute() {
+    auto it = SYMBOL_TABLE.find(identifier);
+    if (it != SYMBOL_TABLE.end() && it->second.isConst)
+        throw std::runtime_error("Cannot reassign const variable: " + identifier);
+
     std::string val = initializer ? initializer->evaluate() : "0";
-    SYMBOL_TABLE[identifier] = {baseType + (isPointer ? "*" : ""), val};
+    RuntimeValue rv;
+    rv.type    = baseType + (isPointer ? "*" : "");
+    rv.value   = val;
+    rv.isConst = isConst;
+    SYMBOL_TABLE[identifier] = rv;
 }
 void RetypeNode::execute() {
     auto it = SYMBOL_TABLE.find(targetVar);
@@ -701,8 +722,12 @@ void ArrayDeclarationNode::execute() {
     SYMBOL_TABLE[name] = v;
 }
 void FunctionDefNode::execute() {
-    SYMBOL_TABLE[name] = {"function", "", {}, params,
-                          std::shared_ptr<BlockNode>(std::move(body))};
+    RuntimeValue rv;
+    rv.type = "function";
+    rv.value = "";
+    rv.params = params;
+    rv.body = std::shared_ptr<BlockNode>(std::move(body));
+    SYMBOL_TABLE[name] = rv;
 }
 void BlockNode::execute() {
     for (const auto& s : statements) if (s) s->execute();
@@ -761,6 +786,17 @@ void ClassDefNode::execute() {
 }
 
 // =====================================================================
+// STRUCT DEFINITION
+// =====================================================================
+
+void StructDefNode::execute() {
+    RuntimeValue sv;
+    sv.type   = "struct";
+    sv.fields = fields;
+    SYMBOL_TABLE[structName] = std::move(sv);
+}
+
+// =====================================================================
 // INSTANCE CREATION
 // =====================================================================
 
@@ -781,6 +817,7 @@ void InstanceCreateNode::execute() {
     auto ctorIt = cit->second.methods.find(className);
     if (ctorIt == cit->second.methods.end()) return;
 
+    // Copy by value — prevents dangling reference after SYMBOL_TABLE = prevSymbols
     MethodDef ctor = ctorIt->second;
 
     std::vector<std::string> argVals;
@@ -798,6 +835,7 @@ void InstanceCreateNode::execute() {
         if (pcit != SYMBOL_TABLE.end()) {
             auto pmit = pcit->second.methods.find(parentCls);
             if (pmit != pcit->second.methods.end()) {
+                // Copy by value — same reason
                 MethodDef parentCtor = pmit->second;
 
                 std::vector<std::string> parentArgVals;
@@ -822,18 +860,13 @@ void InstanceCreateNode::execute() {
                         SYMBOL_TABLE[instanceName].fields[fn] = {"public", "string", parentArgVals[i]};
                 }
 
-                // 1. Inject parent globals BEFORE snapshot
                 injectGlobals(parentCls);
-                // 2. Snapshot
                 auto prevSymbols = SYMBOL_TABLE;
-                // 3. Bind parent ctor params
                 for (size_t i = 0; i < parentCtor.params.size() && i < parentArgVals.size(); i++)
                     SYMBOL_TABLE[parentCtor.params[i].second] =
                         {parentCtor.params[i].first, parentArgVals[i]};
-                // 4. Run parent ctor body
                 try { if (parentCtor.body) parentCtor.body->execute(); }
                 catch (const ReturnException&) {}
-                // 5. Capture, restore, reapply
                 auto globalUpdates = captureGlobals(parentCls);
                 RuntimeValue updatedInst = SYMBOL_TABLE[instanceName];
                 SYMBOL_TABLE = prevSymbols;
@@ -852,30 +885,18 @@ void InstanceCreateNode::execute() {
     }
 
     // ---- Run this constructor's body ----
-
-    // 1. Inject globals BEFORE snapshot
     injectGlobals(className);
-
-    // 2. Snapshot (globals now included — survive restore)
     auto prevSymbols = SYMBOL_TABLE;
-
-    // 3. Bind ctor params
     for (size_t i = 0; i < ctor.params.size() && i < argVals.size(); i++)
         SYMBOL_TABLE[ctor.params[i].second] = {ctor.params[i].first, argVals[i]};
 
-    // 4. Execute
     try { if (ctor.body) ctor.body->execute(); }
     catch (const ReturnException&) {}
 
-    // 5. Capture globals
     auto globalUpdates = captureGlobals(className);
-
-    // 6. Restore scope, keep instance updates
     RuntimeValue updatedInst = SYMBOL_TABLE[instanceName];
     SYMBOL_TABLE = prevSymbols;
     SYMBOL_TABLE[instanceName] = updatedInst;
-
-    // 7. Reapply globals
     reapplyGlobals(globalUpdates);
 
     CURRENT_CLASS    = outerClass;
@@ -913,6 +934,7 @@ std::string Parser::parseTypeName() {
 std::unique_ptr<ExprNode> Parser::parsePrimary() {
     Token t = peek();
 
+    if (t.type == TokenType::Bang)          { advance(); auto operand = parsePrimary(); return std::make_unique<BinaryOpNode>("==", std::move(operand), std::make_unique<NumberLiteralNode>("0")); }
     if (t.type == TokenType::True)          { advance(); return std::make_unique<BooleanLiteralNode>(true); }
     if (t.type == TokenType::False)         { advance(); return std::make_unique<BooleanLiteralNode>(false); }
     if (t.type == TokenType::StringLiteral) { advance(); return std::make_unique<StringLiteralNode>(t.value); }
@@ -949,10 +971,9 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
         while (peek().type != TokenType::GreaterThan) type += advance().value;
         consume(TokenType::GreaterThan, ">");
         consume(TokenType::LeftParen, "(");
-        // Parse a full expression instead of just an identifier
+        // Parse a full expression so cast<string>(someFunc(x)) works
         auto inner = parseLogicalOr();
         consume(TokenType::RightParen, ")");
-        // Wrap in a helper node that casts the result of any expression
         return std::make_unique<CastExprNode>(type, std::move(inner));
     }
 
@@ -1098,6 +1119,44 @@ std::unique_ptr<BlockNode> Parser::parseBlock() {
     return b;
 }
 
+std::unique_ptr<ASTNode> Parser::parseStructDef() {
+    consume(TokenType::Struct, "struct");
+    std::string structName = consume(TokenType::Identifier, "struct name").value;
+    consume(TokenType::LeftBrace, "{");
+
+    std::map<std::string, FieldDef> fields;
+
+    while (peek().type != TokenType::RightBrace &&
+           peek().type != TokenType::EndOfFile) {
+
+        bool isConst = false;
+        if (peek().type == TokenType::Const) {
+            isConst = true;
+            advance();
+        }
+
+        std::string typeName   = parseTypeName();
+        std::string memberName = consume(TokenType::Identifier, "field name").value;
+
+        std::string initVal = "0";
+        if (peek().type == TokenType::Equals) {
+            advance();
+            initVal = parseLogicalOr()->evaluate();
+        }
+        consume(TokenType::Semicolon, ";");
+
+        FieldDef fd;
+        fd.access  = "public";
+        fd.type    = typeName;
+        fd.value   = initVal;
+        fd.isConst = isConst;
+        fields[memberName] = fd;
+    }
+
+    consume(TokenType::RightBrace, "}");
+    return std::make_unique<StructDefNode>(structName, std::move(fields));
+}
+
 std::unique_ptr<ASTNode> Parser::parseClassDef() {
     consume(TokenType::Class, "class");
     std::string className = consume(TokenType::Identifier, "class name").value;
@@ -1220,7 +1279,8 @@ std::unique_ptr<ASTNode> Parser::parseClassDef() {
 std::unique_ptr<ASTNode> Parser::parseStatement() {
     Token t = peek();
 
-    if (t.type == TokenType::Class) return parseClassDef();
+    if (t.type == TokenType::Class)  return parseClassDef();
+    if (t.type == TokenType::Struct) return parseStructDef();
 
     if (t.type == TokenType::Return) {
         advance(); auto e = parseLogicalOr();
@@ -1304,6 +1364,14 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                                         std::move(inc), parseBlock());
     }
 
+    // const prefix for variable declarations
+    bool isConst = false;
+    if (t.type == TokenType::Const) {
+        isConst = true;
+        advance();
+        t = peek();
+    }
+
     if (t.type == TokenType::TypeInt   || t.type == TokenType::TypeString ||
         t.type == TokenType::TypeFloat || t.type == TokenType::TypeBool   ||
         t.type == TokenType::Void) {
@@ -1335,20 +1403,43 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         consume(TokenType::Equals, "=");
         auto init = parseLogicalOr();
         consume(TokenType::Semicolon, ";");
-        return std::make_unique<VarDeclarationNode>(type, ptr, name, std::move(init));
+        return std::make_unique<VarDeclarationNode>(type, ptr, isConst, name, std::move(init));
     }
 
     if (t.type == TokenType::Identifier) {
-        // Detect class instantiation: ClassName varName(args);
+        // Plain assignment: varName = expr;
         if (position + 1 < tokens.size() &&
             tokens[position + 1].type == TokenType::Equals) {
-            std::string varName = advance().value; // consume name
-            advance();                             // consume =
+            std::string varName = advance().value;
+            advance(); // consume =
             auto val = parseLogicalOr();
             consume(TokenType::Semicolon, ";");
             return std::make_unique<ExpressionStatement>(
                 std::make_unique<AssignExprNode>(varName, std::move(val))
             );
+        }
+
+        // Detect class instantiation: ClassName varName(args);
+        if (position + 1 < tokens.size() &&
+            tokens[position + 1].type == TokenType::Identifier &&
+            position + 2 < tokens.size() &&
+            tokens[position + 2].type == TokenType::LeftParen) {
+            auto sit = SYMBOL_TABLE.find(t.value);
+            if (sit != SYMBOL_TABLE.end() && sit->second.type == "class") {
+                std::string cls  = advance().value;
+                std::string inst = advance().value;
+                consume(TokenType::LeftParen, "(");
+                std::vector<std::unique_ptr<ExprNode>> iargs;
+                if (peek().type != TokenType::RightParen) {
+                    do {
+                        if (peek().type == TokenType::Comma) advance();
+                        iargs.push_back(parseLogicalOr());
+                    } while (peek().type == TokenType::Comma);
+                }
+                consume(TokenType::RightParen, ")");
+                consume(TokenType::Semicolon, ";");
+                return std::make_unique<InstanceCreateNode>(cls, inst, std::move(iargs));
+            }
         }
         auto e = parseLogicalOr();
         consume(TokenType::Semicolon, ";");

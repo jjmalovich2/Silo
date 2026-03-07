@@ -1,5 +1,8 @@
-double PI = 3.14159265358979;
-double E  = 2.71828182845904;
+struct Math {
+    const double PI = 3.14159265358979;
+    const double E  = 2.71828182845904;
+    const double INF = 1.0 / 0.0;
+}
 
 double abs(double val) {
     if (val < 0) { return val - val - val; }
@@ -13,25 +16,20 @@ double clamp(double val, double lo, double hi) {
 }
 
 double exp(double bs, int ex) {
-    if (ex == 0) {
-        return 1;
-    }
-
+    if (ex == 0) { return 1; }
     double result = 1.0;
-
     if (ex > 0) {
         for (int i = 0; i < ex; i++) {
             result = result * bs;
         }
         return result;
     } else {
-        for (int i = 0; i < ex; i++) {
+        int posEx = 0 - ex;
+        for (int i = 0; i < posEx; i++) {
             result = result * bs;
         }
-        temp = cast<double>(result);
-        return 1 / temp;
+        return 1 / result;
     }
-
     return 0;
 }
 
@@ -41,10 +39,8 @@ double sqrt(double val) {
         return -1;
     }
     if (val == 0) { return 0; }
-
-    double guess = val / 2.0; // initial guess
+    double guess = val / 2.0;
     double prev_guess = 0.0;
-
     while (abs(guess - prev_guess) >= 0.00001) {
         prev_guess = guess;
         guess = 0.5 * (guess + val / guess);
@@ -53,43 +49,36 @@ double sqrt(double val) {
 }
 
 double max(double n1, double n2) {
-    if (n1 >= n2) {
-        return n1;
-    } else {
-        return n2;
-    }
+    if (n1 >= n2) { return n1; }
+    return n2;
 }
 
 double min(double n1, double n2) {
-    if (n1 <= n2) {
-        return n1;
-    } else {
-        return n2;
-    }
+    if (n1 <= n2) { return n1; }
+    return n2;
 }
 
 double round(double val, int dec) {
     double factor = exp(10, dec);
-    int shifted = cast<int>(val * factor + 0.5);
+    double shifted = val * factor + 0.5;
     return shifted / factor;
 }
 
 int floor(double v) {
-    return cast<int>(v);
+    int f = v;
+    return f;
 }
 
 int ceil(double v) {
-    return cast<int>(v+1);
+    int f = v;
+    if (v - f > 0) { return f + 1; }
+    return f;
 }
 
 int sign(double v) {
-    if (v < 0) {
-        return -1;
-    } else if (v == 0) {
-        return 0;
-    } else {
-        return 1;
-    }
+    if (v < 0) { return -1; }
+    if (v == 0) { return 0; }
+    return 1;
 }
 
 bool isEven(int n) {
@@ -97,11 +86,19 @@ bool isEven(int n) {
 }
 
 bool isOdd(int n) {
-    return !(n % 2 == 0);
+    return !isEven(n);
 }
 
 double log(double x) {
-    return exp(E, x);
+    if (x <= 0) { return 0; }
+    double guess = 1.0;
+    double prev = 0.0;
+    for (int i = 0; i < 100; i++) {
+        prev = guess;
+        guess = guess - 1.0 + x / exp(Math.E, cast<int>(guess));
+        if (abs(guess - prev) < 0.00001) { return guess; }
+    }
+    return guess;
 }
 
 double log10(double x) {
@@ -109,25 +106,25 @@ double log10(double x) {
 }
 
 int factorial(int n) {
-    int result = n;
-    for (int i = n-1; i > 0; i--;) {
-        result = result * (n-i);
+    int result = 1;
+    for (int i = 1; i <= n; i++) {
+        result = result * i;
     }
+    return result;
 }
 
 double toRadians(double deg) {
-    return deg * (PI / 180.0);
+    return deg * (Math.PI / 180.0);
 }
 
 double sin(double x) {
     double result = 0.0;
     double term = x;
-    int sign = 1;
-
+    int s = 1;
     for (int i = 1; i < 20; i++) {
-        result = result + sign * term;
+        result = result + s * term;
         term = term * x * x / ((2 * i) * (2 * i + 1));
-        sign = sign - sign - sign;
+        s = s - s - s;
     }
     return result;
 }
@@ -135,12 +132,11 @@ double sin(double x) {
 double cos(double x) {
     double result = 1.0;
     double term = 1.0;
-    int sign = -1;
-
+    int s = 0 - 1;
     for (int i = 1; i < 20; i++) {
-        term = term * x * x / ((2 * i -1) * (2 * i));
-        result = result + sign * term;
-        sign = sign - sign - sign;
+        term = term * x * x / ((2 * i - 1) * (2 * i));
+        result = result + s * term;
+        s = s - s - s;
     }
     return result;
 }
@@ -150,9 +146,8 @@ double tan(double x) {
 }
 
 int gcd(int a, int b) {
-    if (a < 0) { a = cast<int>(abs(a)); }
-    if (b < 0) { b = cast<int>(abs(b)); }
-
+    if (a < 0) { a = abs(a); }
+    if (b < 0) { b = abs(b); }
     while (b != 0) {
         int temp = b;
         b = a % b;
@@ -166,6 +161,5 @@ int lcm(int a, int b) {
 }
 
 double lerp(double a, double b, double t) {
-    return a * t * (b - a);
+    return a + t * (b - a);
 }
-

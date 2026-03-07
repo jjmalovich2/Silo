@@ -38,13 +38,11 @@ Token Lexer::nextToken() {
         return nextToken();
     }
 
-    // 2. f-strings: f"..." 
-    // Stored as a raw token value; the parser will split it into parts.
+    // 2. F-strings: f"..."
     if (current == 'f' && pos + 1 < src.length() && src[pos + 1] == '"') {
         pos += 2; // skip f and opening "
         std::string raw;
         while (pos < src.length() && src[pos] != '"') {
-            // allow escaped quotes inside
             if (src[pos] == '\\' && pos + 1 < src.length() && src[pos+1] == '"') {
                 raw += '"';
                 pos += 2;
@@ -78,17 +76,17 @@ Token Lexer::nextToken() {
         if (result == "false") return {TokenType::False, "false"};
 
         // Control flow
-        if (result == "return") return {TokenType::Return, "return"};
-        if (result == "if")     return {TokenType::If,     "if"};
-        if (result == "else")   return {TokenType::Else,   "else"};
-        if (result == "while")  return {TokenType::While,  "while"};
-        if (result == "for")    return {TokenType::For,    "for"};
-        if (result == "do")     return {TokenType::DoWhile,"do"};
+        if (result == "return") return {TokenType::Return,   "return"};
+        if (result == "if")     return {TokenType::If,       "if"};
+        if (result == "else")   return {TokenType::Else,     "else"};
+        if (result == "while")  return {TokenType::While,    "while"};
+        if (result == "for")    return {TokenType::For,      "for"};
+        if (result == "do")     return {TokenType::DoWhile,  "do"};
 
-        // Memory
-        if (result == "free")        return {TokenType::Free,        "free"};
-        if (result == "cast")        return {TokenType::Cast,        "cast"};
-        if (result == "static_cast") return {TokenType::StaticCast,  "static_cast"};
+        // Memory & casting
+        if (result == "free")        return {TokenType::Free,       "free"};
+        if (result == "cast")        return {TokenType::Cast,       "cast"};
+        if (result == "static_cast") return {TokenType::StaticCast, "static_cast"};
 
         // Class-related
         if (result == "class")       return {TokenType::Class,       "class"};
@@ -97,6 +95,10 @@ Token Lexer::nextToken() {
         if (result == "protected")   return {TokenType::Protected,   "protected"};
         if (result == "global")      return {TokenType::Global,      "global"};
         if (result == "self")        return {TokenType::Self,        "self"};
+
+        // Struct & const
+        if (result == "struct") return {TokenType::Struct, "struct"};
+        if (result == "const")  return {TokenType::Const,  "const"};
 
         return {TokenType::Identifier, result};
     }
@@ -132,29 +134,29 @@ Token Lexer::nextToken() {
     pos++;
     switch (current) {
         case '=':
-            if (peek() == '=') { pos++; return {TokenType::EqualEqual, "=="}; }
+            if (peek() == '=') { pos++; return {TokenType::EqualEqual,  "=="}; }
             return {TokenType::Equals, "="};
         case '!':
-            if (peek() == '=') { pos++; return {TokenType::NotEqual, "!="}; }
+            if (peek() == '=') { pos++; return {TokenType::NotEqual,    "!="}; }
             return {TokenType::Bang, "!"};
         case '<':
-            if (peek() == '=') { pos++; return {TokenType::LessEqual, "<="}; }
+            if (peek() == '=') { pos++; return {TokenType::LessEqual,   "<="}; }
             return {TokenType::LessThan, "<"};
         case '>':
-            if (peek() == '=') { pos++; return {TokenType::GreaterEqual, ">="}; }
+            if (peek() == '=') { pos++; return {TokenType::GreaterEqual,">="}; }
             return {TokenType::GreaterThan, ">"};
         case '&':
-            if (peek() == '&') { pos++; return {TokenType::AndAnd, "&&"}; }
+            if (peek() == '&') { pos++; return {TokenType::AndAnd,      "&&"}; }
             return {TokenType::Ampersand, "&"};
         case '|':
-            if (peek() == '|') { pos++; return {TokenType::OrOr, "||"}; }
+            if (peek() == '|') { pos++; return {TokenType::OrOr,        "||"}; }
             return {TokenType::EndOfFile, ""}; // bare | not supported
         case '+':
-            if (peek() == '+') { pos++; return {TokenType::PlusPlus,   "++"}; }
+            if (peek() == '+') { pos++; return {TokenType::PlusPlus,    "++"}; }
             return {TokenType::Plus, "+"};
         case '-':
-            if (peek() == '-') { pos++; return {TokenType::MinusMinus, "--"}; }
-            if (peek() == '>') { pos++; return {TokenType::Arrow,      "->"}; }
+            if (peek() == '-') { pos++; return {TokenType::MinusMinus,  "--"}; }
+            if (peek() == '>') { pos++; return {TokenType::Arrow,       "->"}; }
             return {TokenType::Minus, "-"};
         case '~': return {TokenType::Tilde,        "~"};
         case '.': return {TokenType::Dot,          "."};
