@@ -10,7 +10,7 @@
 
 const std::string COMMANDS[] = {"-dump", "-d", "-v", "-version"};
 bool dumpMode = false;
-const std::string VERSION = "Fixed Crits\n\nSilo v1.2.Pisces~Magician_c++17";
+const std::string VERSION = "Fixed Crits\n\nSilo v1.2.Pisces~HighPriestess_c++17";
 
 void compileCommand(const std::string& cmd) {
     auto cc = std::find(std::begin(COMMANDS), std::end(COMMANDS), cmd);

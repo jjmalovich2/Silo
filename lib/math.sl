@@ -1,7 +1,6 @@
 struct Math {
     const double PI = 3.14159265358979;
     const double E  = 2.71828182845904;
-    const double INF = 1.0 / 0.0;
 }
 
 double abs(double val) {

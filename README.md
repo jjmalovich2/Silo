@@ -1,6 +1,6 @@
 # Silo
 
-> A compiled, statically-typed programming language with the memory safety of Rust and the manual memory management of C — built from scratch in C++.
+> An interpreted, statically-typed programming language with the memory safety of Rust and the manual memory management of C — built from scratch in C++.
 
 ---
 

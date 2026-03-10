@@ -67,17 +67,17 @@ static bool isNumeric(const std::string& s) {
     return true;
 }
 
+// FIX: removed bool check — booleans are stored as "1"/"0" internally,
+// so "true"/"false" would never match and caused spurious type errors.
 static std::string inferType(const std::string& val) {
-    if (val == "true" || val == "false") return "bool";
-    if (isNumeric(val)) return (val.find('.') != std::string::npos) ? "float" : "int";
+    if (isNumeric(val))
+        return (val.find('.') != std::string::npos) ? "float" : "int";
     return "string";
-
 }
 
 static std::string formatNum(double v) {
     if (v == (long long)v)
         return std::to_string((long long)v);
-    // Remove trailing zeros
     std::string s = std::to_string(v);
     size_t dot = s.find('.');
     if (dot != std::string::npos) {
@@ -136,8 +136,6 @@ static void reapplyGlobals(
     }
 }
 
-// Removes local variables leaked from outer scopes, keeping only
-// classes, structs, instances, functions, and injected globals.
 static void clearOuterLocals(const std::string& className) {
     std::set<std::string> globals;
     std::string cls = className;
@@ -174,7 +172,6 @@ static std::string getInstanceField(const std::string& instName,
     RuntimeValue& inst = iit->second;
     std::string className = inst.instanceOf;
 
-    // Global fields live on the class definition
     auto cit = SYMBOL_TABLE.find(className);
     if (cit != SYMBOL_TABLE.end()) {
         auto fit = cit->second.fields.find(fieldName);
@@ -250,7 +247,6 @@ static std::string callMethod(const std::string& instName,
 
     std::string className = iit->second.instanceOf;
 
-    // Find method — walk class hierarchy
     MethodDef* methodPtr = nullptr;
     std::string searchClass = className;
     while (!searchClass.empty()) {
@@ -267,38 +263,35 @@ static std::string callMethod(const std::string& instName,
         throw std::runtime_error("Method '" + methodName +
                                  "' not found on class " + className);
 
-    // Copy by value — prevents dangling reference after SYMBOL_TABLE = prevSymbols
     MethodDef method = *methodPtr;
 
     std::string outerClass    = CURRENT_CLASS;
     std::string outerInstance = CURRENT_INSTANCE;
 
-    // 1. Inject globals
     injectGlobals(className);
-    // 2. Clear leaked outer locals so inner methods get a clean scope
     clearOuterLocals(className);
-    // 3. Snapshot clean state
     auto prevSymbols = SYMBOL_TABLE;
 
-    // 4. Set context
     CURRENT_CLASS    = className;
     CURRENT_INSTANCE = instName;
 
-    // 5. Bind parameters
+    // FIX: allow int to be passed where float is expected
     for (size_t i = 0; i < method.params.size() && i < argVals.size(); i++) {
         const std::string& pname = method.params[i].second;
         const std::string& ptype = method.params[i].first;
         if (ptype != argTypes[i] && argTypes[i] != "unknown") {
-            SYMBOL_TABLE     = prevSymbols;
-            CURRENT_CLASS    = outerClass;
-            CURRENT_INSTANCE = outerInstance;
-            throw std::runtime_error("Type mismatch: param '" + pname +
-                                     "' expects " + ptype + " but got " + argTypes[i]);
+            bool ok = (ptype == "float" && argTypes[i] == "int");
+            if (!ok) {
+                SYMBOL_TABLE     = prevSymbols;
+                CURRENT_CLASS    = outerClass;
+                CURRENT_INSTANCE = outerInstance;
+                throw std::runtime_error("Type mismatch: param '" + pname +
+                                         "' expects " + ptype + " but got " + argTypes[i]);
+            }
         }
         SYMBOL_TABLE[pname] = {ptype, argVals[i]};
     }
 
-    // 6. Execute
     std::string result = "0";
     try {
         if (method.body) method.body->execute();
@@ -306,7 +299,6 @@ static std::string callMethod(const std::string& instName,
         result = ret.value;
     }
 
-    // 7. Capture globals, restore, reapply
     auto globalUpdates = captureGlobals(className);
     RuntimeValue updatedInst = SYMBOL_TABLE[instName];
     SYMBOL_TABLE = prevSymbols;
@@ -347,7 +339,11 @@ ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::stri
 RetypeNode::RetypeNode(const std::string& t, const std::string& v) : newType(t), targetVar(v) {}
 PrintNode::PrintNode(std::unique_ptr<ExprNode> expr) : expression(std::move(expr)) {}
 ReturnNode::ReturnNode(std::unique_ptr<ExprNode> v) : value(std::move(v)) {}
-FunctionDefNode::FunctionDefNode(const std::string& rt, const std::string& n, const std::vector<std::pair<std::string,std::string>> p, std::shared_ptr<BlockNode> b) : returnType(rt), name(n), params(p), body(std::move(b)) {}
+// FIX: constructor now takes shared_ptr to prevent body being destroyed on first execute()
+FunctionDefNode::FunctionDefNode(const std::string& rt, const std::string& n,
+                                 const std::vector<std::pair<std::string,std::string>> p,
+                                 std::shared_ptr<BlockNode> b)
+    : returnType(rt), name(n), params(p), body(std::move(b)) {}
 FreeNode::FreeNode(const std::string& id) : identifier(id) {}
 WhileNode::WhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b) : condition(std::move(cond)), body(std::move(b)) {}
 DoWhileNode::DoWhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b) : condition(std::move(cond)), body(std::move(b)) {}
@@ -355,6 +351,9 @@ ForNode::ForNode(std::unique_ptr<ASTNode> init, std::unique_ptr<ExprNode> cond, 
 PostfixOpNode::PostfixOpNode(const std::string& name, const std::string& o) : varName(name), op(o) {}
 AssignExprNode::AssignExprNode(const std::string& name, std::unique_ptr<ExprNode> val) : varName(name), value(std::move(val)) {}
 BinaryOpNode::BinaryOpNode(std::string o, std::unique_ptr<ExprNode> l, std::unique_ptr<ExprNode> r) : op(std::move(o)), left(std::move(l)), right(std::move(r)) {}
+MemberAssignNode::MemberAssignNode(const std::string& inst, const std::string& field,
+                                   std::unique_ptr<ExprNode> val)
+    : instanceName(inst), fieldName(field), value(std::move(val)) {}
 
 IfNode::IfNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> thenB)
     : condition(std::move(cond)), thenBlock(std::move(thenB)), elseBlock(nullptr) {}
@@ -427,12 +426,10 @@ std::string FStringNode::evaluate() const {
                 if (it != SYMBOL_TABLE.end())
                     result += getInstanceField(inst, member, CURRENT_CLASS);
             } else {
-                // Check flat SYMBOL_TABLE first
                 auto it = SYMBOL_TABLE.find(expr);
                 if (it != SYMBOL_TABLE.end()) {
                     result += it->second.value;
                 } else if (!CURRENT_INSTANCE.empty()) {
-                    // Fall back to instance fields
                     auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
                     if (iit != SYMBOL_TABLE.end()) {
                         auto fit = iit->second.fields.find(expr);
@@ -462,7 +459,6 @@ std::string VariableNode::evaluate() const {
     auto it = SYMBOL_TABLE.find(name);
     if (it != SYMBOL_TABLE.end()) return it->second.value;
 
-    // Fallback: check instance fields when inside a class method/constructor
     if (!CURRENT_INSTANCE.empty()) {
         auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
         if (iit != SYMBOL_TABLE.end()) {
@@ -478,8 +474,8 @@ std::string VariableNode::evaluate() const {
             }
         }
     }
-    
-    throw std::runtime_error("Undefined variable: " + name);
+    // FIX: throw instead of silently returning "0"
+    throw std::runtime_error("Undefined variable: '" + name + "'");
 }
 
 std::string PostfixOpNode::evaluate() const {
@@ -496,13 +492,13 @@ std::string PostfixOpNode::evaluate() const {
 }
 
 std::string AssignExprNode::evaluate() const {
-    // Enforce const
     auto it = SYMBOL_TABLE.find(varName);
     if (it != SYMBOL_TABLE.end() && it->second.isConst)
         throw std::runtime_error("Cannot reassign const variable: " + varName);
 
-
     std::string result = value->evaluate();
+
+    // FIX: check instance fields FIRST to prevent outer variable shadowing
     if (!CURRENT_INSTANCE.empty()) {
         auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
         if (iit != SYMBOL_TABLE.end()) {
@@ -519,9 +515,15 @@ std::string AssignExprNode::evaluate() const {
     if (it != SYMBOL_TABLE.end()) {
         it->second.value = result;
     } else {
-        // If variable doesn't exist, create it in the current scope
         SYMBOL_TABLE[varName] = {"auto", result};
     }
+    return result;
+}
+
+// FIX: MemberAssignNode — sets instance field from outside a class (obj.field = val)
+std::string MemberAssignNode::evaluate() const {
+    std::string result = value->evaluate();
+    setInstanceField(instanceName, fieldName, result);
     return result;
 }
 
@@ -600,25 +602,30 @@ std::string ArrayAccessNode::evaluate() const {
 
 std::string FunctionCallNode::evaluate() const {
     auto it = SYMBOL_TABLE.find(funcName);
-    if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined function: " + funcName);
+    // FIX: throw instead of silently returning "0"
+    if (it == SYMBOL_TABLE.end())
+        throw std::runtime_error("Undefined function: '" + funcName + "'");
 
     std::vector<std::string> argValues, argTypes;
     for (auto& arg : args) {
         std::string val = arg->evaluate();
         argValues.push_back(val);
-        // Always use "unknown" so numeric literals pass type checks
         argTypes.push_back(inferType(val));
     }
 
     RuntimeValue func = it->second;
     auto prevScope = SYMBOL_TABLE;
 
+    // FIX: allow int to be passed where float is expected
     for (size_t i = 0; i < func.params.size() && i < argValues.size(); i++) {
         const std::string& ptype = func.params[i].first;
         const std::string& pname = func.params[i].second;
-        if (ptype != argTypes[i] && argTypes[i] != "unknown")
-            throw std::runtime_error("Type mismatch: param '" + pname +
-                                     "' expects " + ptype + " but got " + argTypes[i]);
+        if (ptype != argTypes[i] && argTypes[i] != "unknown") {
+            bool ok = (ptype == "float" && argTypes[i] == "int");
+            if (!ok)
+                throw std::runtime_error("Type mismatch: param '" + pname +
+                                         "' expects " + ptype + " but got " + argTypes[i]);
+        }
         SYMBOL_TABLE[pname] = {ptype, argValues[i]};
     }
 
@@ -634,8 +641,16 @@ std::string BinaryOpNode::evaluate() const {
     std::string lStr = left->evaluate();
     std::string rStr = right->evaluate();
 
+    // String concatenation
     if ((!isNumeric(lStr) || !isNumeric(rStr)) && op == "+")
         return lStr + rStr;
+
+    // FIX: string equality — compare as strings if either side is non-numeric
+    if (!isNumeric(lStr) || !isNumeric(rStr)) {
+        if (op == "==") return (lStr == rStr) ? "1" : "0";
+        if (op == "!=") return (lStr != rStr) ? "1" : "0";
+        return "0"; // <, >, <=, >= undefined for non-numeric strings
+    }
 
     double l = 0, r = 0;
     try { l = std::stod(lStr); r = std::stod(rStr); } catch (...) { return "0"; }
@@ -664,10 +679,10 @@ std::string SelfAccessNode::evaluate() const {
         throw std::runtime_error("'self' used outside of a class method");
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
-        for (auto& a : callArgs) { 
+        for (auto& a : callArgs) {
             std::string val = a->evaluate();
-            argVals.push_back(val); 
-            argTypes.push_back(inferType(val)); 
+            argVals.push_back(val);
+            argTypes.push_back(inferType(val));
         }
         return callMethod(CURRENT_INSTANCE, memberName, argVals, argTypes);
     }
@@ -681,7 +696,6 @@ std::string MemberAccessNode::evaluate() const {
 
     RuntimeValue& inst = iit->second;
 
-    // Struct field access
     if (inst.type == "struct") {
         auto fit = inst.fields.find(memberName);
         if (fit != inst.fields.end()) return fit->second.value;
@@ -696,10 +710,10 @@ std::string MemberAccessNode::evaluate() const {
 
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
-        for (auto& a : callArgs) { 
+        for (auto& a : callArgs) {
             std::string val = a->evaluate();
-            argVals.push_back(val); 
-            argTypes.push_back(inferType(val)); 
+            argVals.push_back(val);
+            argTypes.push_back(inferType(val));
         }
         return callMethod(instanceName, memberName, argVals, argTypes);
     }
@@ -739,12 +753,13 @@ void ArrayDeclarationNode::execute() {
     for (int i = 0; i < size; i++) v.arrayElements.push_back("0");
     SYMBOL_TABLE[name] = v;
 }
+// FIX: body is now shared_ptr — assign directly, no move, node stays intact for re-execution
 void FunctionDefNode::execute() {
     RuntimeValue rv;
-    rv.type = "function";
-    rv.value = "";
+    rv.type   = "function";
+    rv.value  = "";
     rv.params = params;
-    rv.body = std::shared_ptr<BlockNode>(std::move(body));
+    rv.body   = body;
     SYMBOL_TABLE[name] = rv;
 }
 void BlockNode::execute() {
@@ -826,13 +841,12 @@ void InstanceCreateNode::execute() {
     RuntimeValue inst;
     inst.type       = "instance:" + className;
     inst.instanceOf = className;
+    // FIX: was (== "global"), which copied only global fields and left the instance empty
     for (const auto& kv : cit->second.fields) {
         if (kv.second.access != "global") {
             FieldDef fd = kv.second;
-
-            if (fd.initExpr) {
+            if (fd.initExpr)
                 fd.value = fd.initExpr->evaluate();
-            }
             inst.fields[kv.first] = fd;
         }
     }
@@ -842,7 +856,6 @@ void InstanceCreateNode::execute() {
     auto ctorIt = cit->second.methods.find(className);
     if (ctorIt == cit->second.methods.end()) return;
 
-    // Copy by value — prevents dangling reference after SYMBOL_TABLE = prevSymbols
     MethodDef ctor = ctorIt->second;
 
     std::vector<std::string> argVals;
@@ -860,7 +873,6 @@ void InstanceCreateNode::execute() {
         if (pcit != SYMBOL_TABLE.end()) {
             auto pmit = pcit->second.methods.find(parentCls);
             if (pmit != pcit->second.methods.end()) {
-                // Copy by value — same reason
                 MethodDef parentCtor = pmit->second;
 
                 std::vector<std::string> parentArgVals;
@@ -996,7 +1008,6 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
         while (peek().type != TokenType::GreaterThan) type += advance().value;
         consume(TokenType::GreaterThan, ">");
         consume(TokenType::LeftParen, "(");
-        // Parse a full expression so cast<string>(someFunc(x)) works
         auto inner = parseLogicalOr();
         consume(TokenType::RightParen, ")");
         return std::make_unique<CastExprNode>(type, std::move(inner));
@@ -1163,19 +1174,18 @@ std::unique_ptr<ASTNode> Parser::parseStructDef() {
         std::string typeName   = parseTypeName();
         std::string memberName = consume(TokenType::Identifier, "field name").value;
 
-        std::string initVal = "0";
         std::shared_ptr<ExprNode> initExpr = nullptr;
         if (peek().type == TokenType::Equals) {
             advance();
-            initExpr = parseLogicalOr(); // just store it
+            initExpr = parseLogicalOr();
         }
         consume(TokenType::Semicolon, ";");
 
         FieldDef fd;
-        fd.access  = "public";
-        fd.type    = typeName;
-        fd.value   = initVal;
-        fd.isConst = isConst;
+        fd.access   = "public";
+        fd.type     = typeName;
+        fd.value    = initExpr ? initExpr->evaluate() : "0";
+        fd.isConst  = isConst;
         fd.initExpr = initExpr;
         fields[memberName] = fd;
     }
@@ -1397,7 +1407,6 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                                         std::move(inc), parseBlock());
     }
 
-    // const prefix for variable declarations
     bool isConst = false;
     if (t.type == TokenType::Const) {
         isConst = true;
@@ -1424,7 +1433,11 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                 } while (peek().type == TokenType::Comma);
             }
             consume(TokenType::RightParen, ")");
-            return std::make_unique<FunctionDefNode>(type + (ptr ? "*" : ""), name, p, std::shared_ptr<BlockNode>(parseBlock()));
+            // FIX: wrap in shared_ptr so FunctionDefNode body survives re-execution
+            return std::make_unique<FunctionDefNode>(
+                type + (ptr ? "*" : ""), name, p,
+                std::shared_ptr<BlockNode>(parseBlock())
+            );
         }
         if (peek().type == TokenType::LeftBracket) {
             advance();
@@ -1440,11 +1453,29 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
     }
 
     if (t.type == TokenType::Identifier) {
+        // FIX: obj.field = val; — dotted lvalue assignment from outside a class
+        if (position + 1 < tokens.size() &&
+            tokens[position + 1].type == TokenType::Dot &&
+            position + 2 < tokens.size() &&
+            tokens[position + 2].type == TokenType::Identifier &&
+            position + 3 < tokens.size() &&
+            tokens[position + 3].type == TokenType::Equals) {
+            std::string instName  = advance().value; // obj
+            advance();                               // .
+            std::string fieldName = advance().value; // field
+            advance();                               // =
+            auto val = parseLogicalOr();
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<MemberAssignNode>(instName, fieldName, std::move(val))
+            );
+        }
+
         // Plain assignment: varName = expr;
         if (position + 1 < tokens.size() &&
             tokens[position + 1].type == TokenType::Equals) {
             std::string varName = advance().value;
-            advance(); // consume =
+            advance();
             auto val = parseLogicalOr();
             consume(TokenType::Semicolon, ";");
             return std::make_unique<ExpressionStatement>(
@@ -1479,7 +1510,24 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         return std::make_unique<ExpressionStatement>(std::move(e));
     }
 
+    // FIX: self.field = val; — dotted lvalue assignment from inside a class method
     if (t.type == TokenType::Self) {
+        if (position + 1 < tokens.size() &&
+            tokens[position + 1].type == TokenType::Dot &&
+            position + 2 < tokens.size() &&
+            tokens[position + 2].type == TokenType::Identifier &&
+            position + 3 < tokens.size() &&
+            tokens[position + 3].type == TokenType::Equals) {
+            advance(); // self
+            advance(); // .
+            std::string fieldName = advance().value;
+            advance(); // =
+            auto val = parseLogicalOr();
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<AssignExprNode>(fieldName, std::move(val))
+            );
+        }
         auto e = parseLogicalOr();
         consume(TokenType::Semicolon, ";");
         return std::make_unique<ExpressionStatement>(std::move(e));

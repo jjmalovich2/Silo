@@ -66,6 +66,7 @@ struct Token {
 // Forward declarations
 struct ASTNode;
 class BlockNode;
+struct ExprNode;
 
 // --- Field definition for class/struct members ---
 struct FieldDef {
@@ -257,6 +258,16 @@ public:
     std::string evaluate() const override;
 };
 
+class MemberAssignNode : public ExprNode {
+    std::string instanceName;
+    std::string fieldName;
+    std::unique_ptr<ExprNode> value;
+public:
+    MemberAssignNode(const std::string& inst, const std::string& field,
+                     std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
 // =====================================================================
 // STATEMENT NODES
 // =====================================================================
@@ -363,8 +374,8 @@ class FunctionDefNode : public ASTNode {
     std::shared_ptr<BlockNode> body;
 public:
     FunctionDefNode(const std::string& rt, const std::string& n,
-                    const std::vector<std::pair<std::string, std::string>> p,
-                    std::shared_ptr<BlockNode> b);
+                const std::vector<std::pair<std::string, std::string>> p,
+                std::shared_ptr<BlockNode> b);
     void execute() override;
 };
 
