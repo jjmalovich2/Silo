@@ -67,6 +67,13 @@ static bool isNumeric(const std::string& s) {
     return true;
 }
 
+static std::string inferType(const std::string& val) {
+    if (val == "true" || val == "false") return "bool";
+    if (isNumeric(val)) return (val.find('.') != std::string::npos) ? "float" : "int";
+    return "string";
+
+}
+
 static std::string formatNum(double v) {
     if (v == (long long)v)
         return std::to_string((long long)v);
@@ -340,7 +347,7 @@ ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::stri
 RetypeNode::RetypeNode(const std::string& t, const std::string& v) : newType(t), targetVar(v) {}
 PrintNode::PrintNode(std::unique_ptr<ExprNode> expr) : expression(std::move(expr)) {}
 ReturnNode::ReturnNode(std::unique_ptr<ExprNode> v) : value(std::move(v)) {}
-FunctionDefNode::FunctionDefNode(const std::string& rt, const std::string& n, const std::vector<std::pair<std::string,std::string>> p, std::unique_ptr<BlockNode> b) : returnType(rt), name(n), params(p), body(std::move(b)) {}
+FunctionDefNode::FunctionDefNode(const std::string& rt, const std::string& n, const std::vector<std::pair<std::string,std::string>> p, std::shared_ptr<BlockNode> b) : returnType(rt), name(n), params(p), body(std::move(b)) {}
 FreeNode::FreeNode(const std::string& id) : identifier(id) {}
 WhileNode::WhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b) : condition(std::move(cond)), body(std::move(b)) {}
 DoWhileNode::DoWhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b) : condition(std::move(cond)), body(std::move(b)) {}
@@ -471,7 +478,8 @@ std::string VariableNode::evaluate() const {
             }
         }
     }
-    return "0";
+    
+    throw std::runtime_error("Undefined variable: " + name);
 }
 
 std::string PostfixOpNode::evaluate() const {
@@ -493,21 +501,25 @@ std::string AssignExprNode::evaluate() const {
     if (it != SYMBOL_TABLE.end() && it->second.isConst)
         throw std::runtime_error("Cannot reassign const variable: " + varName);
 
+
     std::string result = value->evaluate();
-    if (it != SYMBOL_TABLE.end()) {
-        it->second.value = result;
-    } else if (!CURRENT_INSTANCE.empty()) {
-        // Try to write to an instance field
+    if (!CURRENT_INSTANCE.empty()) {
         auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
         if (iit != SYMBOL_TABLE.end()) {
             auto fit = iit->second.fields.find(varName);
             if (fit != iit->second.fields.end()) {
+                if (fit->second.isConst)
+                    throw std::runtime_error("Cannot reassign const field: " + varName);
                 fit->second.value = result;
                 return result;
             }
         }
-        SYMBOL_TABLE[varName] = {"auto", result};
+    }
+
+    if (it != SYMBOL_TABLE.end()) {
+        it->second.value = result;
     } else {
+        // If variable doesn't exist, create it in the current scope
         SYMBOL_TABLE[varName] = {"auto", result};
     }
     return result;
@@ -588,13 +600,14 @@ std::string ArrayAccessNode::evaluate() const {
 
 std::string FunctionCallNode::evaluate() const {
     auto it = SYMBOL_TABLE.find(funcName);
-    if (it == SYMBOL_TABLE.end()) return "0";
+    if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined function: " + funcName);
 
     std::vector<std::string> argValues, argTypes;
     for (auto& arg : args) {
-        argValues.push_back(arg->evaluate());
+        std::string val = arg->evaluate();
+        argValues.push_back(val);
         // Always use "unknown" so numeric literals pass type checks
-        argTypes.push_back("unknown");
+        argTypes.push_back(inferType(val));
     }
 
     RuntimeValue func = it->second;
@@ -651,7 +664,11 @@ std::string SelfAccessNode::evaluate() const {
         throw std::runtime_error("'self' used outside of a class method");
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
-        for (auto& a : callArgs) { argVals.push_back(a->evaluate()); argTypes.push_back("unknown"); }
+        for (auto& a : callArgs) { 
+            std::string val = a->evaluate();
+            argVals.push_back(val); 
+            argTypes.push_back(inferType(val)); 
+        }
         return callMethod(CURRENT_INSTANCE, memberName, argVals, argTypes);
     }
     return getInstanceField(CURRENT_INSTANCE, memberName, CURRENT_CLASS);
@@ -679,9 +696,10 @@ std::string MemberAccessNode::evaluate() const {
 
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
-        for (auto& a : callArgs) {
-            argVals.push_back(a->evaluate());
-            argTypes.push_back("unknown");
+        for (auto& a : callArgs) { 
+            std::string val = a->evaluate();
+            argVals.push_back(val); 
+            argTypes.push_back(inferType(val)); 
         }
         return callMethod(instanceName, memberName, argVals, argTypes);
     }
@@ -808,9 +826,16 @@ void InstanceCreateNode::execute() {
     RuntimeValue inst;
     inst.type       = "instance:" + className;
     inst.instanceOf = className;
-    for (const auto& kv : cit->second.fields)
-        if (kv.second.access != "global")
-            inst.fields[kv.first] = kv.second;
+    for (const auto& kv : cit->second.fields) {
+        if (kv.second.access != "global") {
+            FieldDef fd = kv.second;
+
+            if (fd.initExpr) {
+                fd.value = fd.initExpr->evaluate();
+            }
+            inst.fields[kv.first] = fd;
+        }
+    }
 
     SYMBOL_TABLE[instanceName] = inst;
 
@@ -1139,9 +1164,10 @@ std::unique_ptr<ASTNode> Parser::parseStructDef() {
         std::string memberName = consume(TokenType::Identifier, "field name").value;
 
         std::string initVal = "0";
+        std::shared_ptr<ExprNode> initExpr = nullptr;
         if (peek().type == TokenType::Equals) {
             advance();
-            initVal = parseLogicalOr()->evaluate();
+            initExpr = parseLogicalOr(); // just store it
         }
         consume(TokenType::Semicolon, ";");
 
@@ -1150,6 +1176,7 @@ std::unique_ptr<ASTNode> Parser::parseStructDef() {
         fd.type    = typeName;
         fd.value   = initVal;
         fd.isConst = isConst;
+        fd.initExpr = initExpr;
         fields[memberName] = fd;
     }
 
@@ -1261,13 +1288,19 @@ std::unique_ptr<ASTNode> Parser::parseClassDef() {
             md.ownerClass = className;
             methods[memberName] = std::move(md);
         } else {
-            std::string initVal = "0";
+            std::shared_ptr<ExprNode> initExpr = nullptr;
             if (peek().type == TokenType::Equals) {
                 advance();
-                initVal = parseLogicalOr()->evaluate();
+                initExpr = parseLogicalOr();
             }
             consume(TokenType::Semicolon, ";");
-            fields[memberName] = {access, typeName, initVal};
+
+            FieldDef fd;
+            fd.access   = access;
+            fd.type     = typeName;
+            fd.value    = initExpr ? initExpr->evaluate() : "0";
+            fd.initExpr = initExpr;
+            fields[memberName] = fd;
         }
     }
 
@@ -1391,7 +1424,7 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                 } while (peek().type == TokenType::Comma);
             }
             consume(TokenType::RightParen, ")");
-            return std::make_unique<FunctionDefNode>(type + (ptr ? "*" : ""), name, p, parseBlock());
+            return std::make_unique<FunctionDefNode>(type + (ptr ? "*" : ""), name, p, std::shared_ptr<BlockNode>(parseBlock()));
         }
         if (peek().type == TokenType::LeftBracket) {
             advance();

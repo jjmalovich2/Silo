@@ -73,6 +73,7 @@ struct FieldDef {
     std::string type;
     std::string value;
     bool isConst = false; // const fields cannot be reassigned
+    std::shared_ptr<ExprNode> initExpr; // for const fields initialized with expressions
 };
 
 // --- Method definition for class members ---
@@ -359,11 +360,11 @@ class FunctionDefNode : public ASTNode {
     std::string returnType;
     std::string name;
     std::vector<std::pair<std::string, std::string>> params;
-    std::unique_ptr<BlockNode> body;
+    std::shared_ptr<BlockNode> body;
 public:
     FunctionDefNode(const std::string& rt, const std::string& n,
                     const std::vector<std::pair<std::string, std::string>> p,
-                    std::unique_ptr<BlockNode> b);
+                    std::shared_ptr<BlockNode> b);
     void execute() override;
 };
 
