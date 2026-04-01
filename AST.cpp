@@ -13,12 +13,16 @@ std::string CURRENT_CLASS    = "";
 std::string CURRENT_INSTANCE = "";
 
 // =====================================================================
-// HELPERS
+// CONTROL-FLOW EXCEPTIONS
 // =====================================================================
 
-struct ReturnException {
-    std::string value;
-};
+struct ReturnException   { std::string value; };
+struct BreakException    {};
+struct ContinueException {};
+
+// =====================================================================
+// HELPERS
+// =====================================================================
 
 void printSymbolTable() {
     std::cout << "\n=== SYMBOL TABLE DUMP ===\n";
@@ -67,8 +71,6 @@ static bool isNumeric(const std::string& s) {
     return true;
 }
 
-// FIX: removed bool check — booleans are stored as "1"/"0" internally,
-// so "true"/"false" would never match and caused spurious type errors.
 static std::string inferType(const std::string& val) {
     if (isNumeric(val))
         return (val.find('.') != std::string::npos) ? "float" : "int";
@@ -275,7 +277,6 @@ static std::string callMethod(const std::string& instName,
     CURRENT_CLASS    = className;
     CURRENT_INSTANCE = instName;
 
-    // FIX: allow int to be passed where float is expected
     for (size_t i = 0; i < method.params.size() && i < argVals.size(); i++) {
         const std::string& pname = method.params[i].second;
         const std::string& ptype = method.params[i].first;
@@ -339,7 +340,6 @@ ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::stri
 RetypeNode::RetypeNode(const std::string& t, const std::string& v) : newType(t), targetVar(v) {}
 PrintNode::PrintNode(std::unique_ptr<ExprNode> expr) : expression(std::move(expr)) {}
 ReturnNode::ReturnNode(std::unique_ptr<ExprNode> v) : value(std::move(v)) {}
-// FIX: constructor now takes shared_ptr to prevent body being destroyed on first execute()
 FunctionDefNode::FunctionDefNode(const std::string& rt, const std::string& n,
                                  const std::vector<std::pair<std::string,std::string>> p,
                                  std::shared_ptr<BlockNode> b)
@@ -412,11 +412,10 @@ std::string FStringNode::evaluate() const {
                 std::string member = expr.substr(5);
                 if (!CURRENT_INSTANCE.empty()) {
                     size_t parenPos = member.find('(');
-                    if (parenPos != std::string::npos) {
+                    if (parenPos != std::string::npos)
                         result += callMethod(CURRENT_INSTANCE, member.substr(0, parenPos), {}, {});
-                    } else {
+                    else
                         result += getInstanceField(CURRENT_INSTANCE, member, CURRENT_CLASS);
-                    }
                 }
             } else if (expr.find('.') != std::string::npos) {
                 size_t dot = expr.find('.');
@@ -474,7 +473,6 @@ std::string VariableNode::evaluate() const {
             }
         }
     }
-    // FIX: throw instead of silently returning "0"
     throw std::runtime_error("Undefined variable: '" + name + "'");
 }
 
@@ -498,7 +496,7 @@ std::string AssignExprNode::evaluate() const {
 
     std::string result = value->evaluate();
 
-    // FIX: check instance fields FIRST to prevent outer variable shadowing
+    // Check instance fields first when inside a method
     if (!CURRENT_INSTANCE.empty()) {
         auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
         if (iit != SYMBOL_TABLE.end()) {
@@ -520,7 +518,6 @@ std::string AssignExprNode::evaluate() const {
     return result;
 }
 
-// FIX: MemberAssignNode — sets instance field from outside a class (obj.field = val)
 std::string MemberAssignNode::evaluate() const {
     std::string result = value->evaluate();
     setInstanceField(instanceName, fieldName, result);
@@ -601,8 +598,18 @@ std::string ArrayAccessNode::evaluate() const {
 }
 
 std::string FunctionCallNode::evaluate() const {
+    // ── builtin: input(prompt?) ──────────────────────────────────────
+    if (funcName == "input") {
+        if (!args.empty()) {
+            std::cout << args[0]->evaluate();
+            std::cout.flush();
+        }
+        std::string line;
+        std::getline(std::cin, line);
+        return line;
+    }
+
     auto it = SYMBOL_TABLE.find(funcName);
-    // FIX: throw instead of silently returning "0"
     if (it == SYMBOL_TABLE.end())
         throw std::runtime_error("Undefined function: '" + funcName + "'");
 
@@ -616,7 +623,6 @@ std::string FunctionCallNode::evaluate() const {
     RuntimeValue func = it->second;
     auto prevScope = SYMBOL_TABLE;
 
-    // FIX: allow int to be passed where float is expected
     for (size_t i = 0; i < func.params.size() && i < argValues.size(); i++) {
         const std::string& ptype = func.params[i].first;
         const std::string& pname = func.params[i].second;
@@ -645,11 +651,11 @@ std::string BinaryOpNode::evaluate() const {
     if ((!isNumeric(lStr) || !isNumeric(rStr)) && op == "+")
         return lStr + rStr;
 
-    // FIX: string equality — compare as strings if either side is non-numeric
+    // String equality — compare as strings if either side is non-numeric
     if (!isNumeric(lStr) || !isNumeric(rStr)) {
         if (op == "==") return (lStr == rStr) ? "1" : "0";
         if (op == "!=") return (lStr != rStr) ? "1" : "0";
-        return "0"; // <, >, <=, >= undefined for non-numeric strings
+        return "0";
     }
 
     double l = 0, r = 0;
@@ -744,51 +750,87 @@ void VarDeclarationNode::execute() {
     rv.isConst = isConst;
     SYMBOL_TABLE[identifier] = rv;
 }
+
 void RetypeNode::execute() {
     auto it = SYMBOL_TABLE.find(targetVar);
     if (it != SYMBOL_TABLE.end()) it->second.type = newType;
 }
+
 void ArrayDeclarationNode::execute() {
     RuntimeValue v; v.type = type + "[]";
     for (int i = 0; i < size; i++) v.arrayElements.push_back("0");
     SYMBOL_TABLE[name] = v;
 }
-// FIX: body is now shared_ptr — assign directly, no move, node stays intact for re-execution
+
 void FunctionDefNode::execute() {
     RuntimeValue rv;
     rv.type   = "function";
     rv.value  = "";
     rv.params = params;
-    rv.body   = body;
+    rv.body   = body; // shared_ptr copy — body never destroyed
     SYMBOL_TABLE[name] = rv;
 }
+
 void BlockNode::execute() {
     for (const auto& s : statements) if (s) s->execute();
 }
+
 void FreeNode::execute() {
     auto it = SYMBOL_TABLE.find(identifier);
     if (it != SYMBOL_TABLE.end()) SYMBOL_TABLE.erase(it);
     else std::cerr << "[!] Warning: Freeing non-existent '" << identifier << "'\n";
 }
+
+// break and continue throw their exceptions to be caught by loop nodes
+void BreakNode::execute()    { throw BreakException{};    }
+void ContinueNode::execute() { throw ContinueException{}; }
+
 void IfNode::execute() {
     if (condition->evaluate() != "0") { thenBlock->execute(); return; }
     for (auto& ei : elseIfBlocks)
         if (ei.first->evaluate() != "0") { ei.second->execute(); return; }
     if (elseBlock) elseBlock->execute();
 }
+
 void WhileNode::execute() {
-    while (condition->evaluate() != "0") body->execute();
+    while (condition->evaluate() != "0") {
+        try {
+            body->execute();
+        } catch (const BreakException&) {
+            return;
+        } catch (const ContinueException&) {
+            // re-evaluate condition on next iteration
+        }
+    }
 }
+
 void DoWhileNode::execute() {
-    do { body->execute(); } while (condition->evaluate() != "0");
+    do {
+        try {
+            body->execute();
+        } catch (const BreakException&) {
+            return;
+        } catch (const ContinueException&) {
+            // fall through to condition check
+        }
+    } while (condition->evaluate() != "0");
 }
+
 void ForNode::execute() {
     if (init) init->execute();
     while (condition->evaluate() != "0") {
-        body->execute();
+        try {
+            body->execute();
+        } catch (const BreakException&) {
+            return;
+        } catch (const ContinueException&) {
+            if (increment) increment->evaluate(); // still run increment on continue
+            continue;
+        }
         if (increment) increment->evaluate();
     }
 }
+
 void ReturnNode::execute() { throw ReturnException{value ? value->evaluate() : "0"}; }
 void PrintNode::execute()  { std::cout << expression->evaluate() << "\n"; }
 void MemberAccessStatement::execute() { node->evaluate(); }
@@ -841,12 +883,11 @@ void InstanceCreateNode::execute() {
     RuntimeValue inst;
     inst.type       = "instance:" + className;
     inst.instanceOf = className;
-    // FIX: was (== "global"), which copied only global fields and left the instance empty
+    // Copy non-global fields; re-evaluate initExpr so defaults are fresh per instance
     for (const auto& kv : cit->second.fields) {
         if (kv.second.access != "global") {
             FieldDef fd = kv.second;
-            if (fd.initExpr)
-                fd.value = fd.initExpr->evaluate();
+            if (fd.initExpr) fd.value = fd.initExpr->evaluate();
             inst.fields[kv.first] = fd;
         }
     }
@@ -866,7 +907,7 @@ void InstanceCreateNode::execute() {
     CURRENT_CLASS    = className;
     CURRENT_INSTANCE = instanceName;
 
-    // ---- Parent constructor delegation ----
+    // ── parent constructor delegation ──────────────────────────────
     if (!ctor.parentConstructorClass.empty()) {
         std::string parentCls = ctor.parentConstructorClass;
         auto pcit = SYMBOL_TABLE.find(parentCls);
@@ -913,7 +954,7 @@ void InstanceCreateNode::execute() {
         }
     }
 
-    // ---- This constructor's -> (field, ...) bindings ----
+    // ── constructor -> (field, ...) bindings ───────────────────────
     for (size_t i = 0; i < ctor.constructorBindings.size() && i < argVals.size(); i++) {
         const std::string& fn = ctor.constructorBindings[i];
         auto fit = SYMBOL_TABLE[instanceName].fields.find(fn);
@@ -921,7 +962,7 @@ void InstanceCreateNode::execute() {
             fit->second.value = argVals[i];
     }
 
-    // ---- Run this constructor's body ----
+    // ── run constructor body ───────────────────────────────────────
     injectGlobals(className);
     auto prevSymbols = SYMBOL_TABLE;
     for (size_t i = 0; i < ctor.params.size() && i < argVals.size(); i++)
@@ -968,10 +1009,31 @@ std::string Parser::parseTypeName() {
     throw std::runtime_error("Expected type name, got: " + t.value);
 }
 
+// ── helper: map compound token to operator string ─────────────────────
+static std::string compoundOp(TokenType t) {
+    if (t == TokenType::PlusEquals)  return "+";
+    if (t == TokenType::MinusEquals) return "-";
+    if (t == TokenType::TimesEquals) return "*";
+    if (t == TokenType::DivEquals)   return "/";
+    if (t == TokenType::ModEquals)   return "%";
+    return "";
+}
+
+static bool isCompound(TokenType t) {
+    return t == TokenType::PlusEquals  || t == TokenType::MinusEquals ||
+           t == TokenType::TimesEquals || t == TokenType::DivEquals   ||
+           t == TokenType::ModEquals;
+}
+
 std::unique_ptr<ExprNode> Parser::parsePrimary() {
     Token t = peek();
 
-    if (t.type == TokenType::Bang)          { advance(); auto operand = parsePrimary(); return std::make_unique<BinaryOpNode>("==", std::move(operand), std::make_unique<NumberLiteralNode>("0")); }
+    if (t.type == TokenType::Bang) {
+        advance();
+        auto operand = parsePrimary();
+        return std::make_unique<BinaryOpNode>("==", std::move(operand),
+                                              std::make_unique<NumberLiteralNode>("0"));
+    }
     if (t.type == TokenType::True)          { advance(); return std::make_unique<BooleanLiteralNode>(true); }
     if (t.type == TokenType::False)         { advance(); return std::make_unique<BooleanLiteralNode>(false); }
     if (t.type == TokenType::StringLiteral) { advance(); return std::make_unique<StringLiteralNode>(t.value); }
@@ -1162,14 +1224,9 @@ std::unique_ptr<ASTNode> Parser::parseStructDef() {
 
     std::map<std::string, FieldDef> fields;
 
-    while (peek().type != TokenType::RightBrace &&
-           peek().type != TokenType::EndOfFile) {
-
+    while (peek().type != TokenType::RightBrace && peek().type != TokenType::EndOfFile) {
         bool isConst = false;
-        if (peek().type == TokenType::Const) {
-            isConst = true;
-            advance();
-        }
+        if (peek().type == TokenType::Const) { isConst = true; advance(); }
 
         std::string typeName   = parseTypeName();
         std::string memberName = consume(TokenType::Identifier, "field name").value;
@@ -1304,7 +1361,6 @@ std::unique_ptr<ASTNode> Parser::parseClassDef() {
                 initExpr = parseLogicalOr();
             }
             consume(TokenType::Semicolon, ";");
-
             FieldDef fd;
             fd.access   = access;
             fd.type     = typeName;
@@ -1329,6 +1385,18 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         advance(); auto e = parseLogicalOr();
         consume(TokenType::Semicolon, ";");
         return std::make_unique<ReturnNode>(std::move(e));
+    }
+
+    if (t.type == TokenType::Break) {
+        advance();
+        consume(TokenType::Semicolon, ";");
+        return std::make_unique<BreakNode>();
+    }
+
+    if (t.type == TokenType::Continue) {
+        advance();
+        consume(TokenType::Semicolon, ";");
+        return std::make_unique<ContinueNode>();
     }
 
     if (t.type == TokenType::Free) {
@@ -1395,9 +1463,19 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         std::unique_ptr<ExprNode> inc;
         if (peek().type == TokenType::Identifier) {
             std::string varName = advance().value;
-            if (peek().type == TokenType::PlusPlus || peek().type == TokenType::MinusMinus)
+            if (peek().type == TokenType::PlusPlus || peek().type == TokenType::MinusMinus) {
                 inc = std::make_unique<PostfixOpNode>(varName, advance().value);
-            else {
+            } else if (isCompound(peek().type)) {
+                std::string op = compoundOp(advance().type);
+                inc = std::make_unique<AssignExprNode>(
+                    varName,
+                    std::make_unique<BinaryOpNode>(
+                        op,
+                        std::make_unique<VariableNode>(varName),
+                        parseLogicalOr()
+                    )
+                );
+            } else {
                 consume(TokenType::Equals, "=");
                 inc = std::make_unique<AssignExprNode>(varName, parseLogicalOr());
             }
@@ -1433,7 +1511,6 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                 } while (peek().type == TokenType::Comma);
             }
             consume(TokenType::RightParen, ")");
-            // FIX: wrap in shared_ptr so FunctionDefNode body survives re-execution
             return std::make_unique<FunctionDefNode>(
                 type + (ptr ? "*" : ""), name, p,
                 std::shared_ptr<BlockNode>(parseBlock())
@@ -1453,17 +1530,42 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
     }
 
     if (t.type == TokenType::Identifier) {
-        // FIX: obj.field = val; — dotted lvalue assignment from outside a class
+        // ── obj.field += expr; ────────────────────────────────────────
+        if (position + 1 < tokens.size() &&
+            tokens[position + 1].type == TokenType::Dot &&
+            position + 2 < tokens.size() &&
+            tokens[position + 2].type == TokenType::Identifier &&
+            position + 3 < tokens.size() &&
+            isCompound(tokens[position + 3].type)) {
+            std::string instName  = advance().value;
+            advance(); // .
+            std::string fieldName = advance().value;
+            std::string op = compoundOp(advance().type);
+            auto rhs = parseLogicalOr();
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<MemberAssignNode>(
+                    instName, fieldName,
+                    std::make_unique<BinaryOpNode>(
+                        op,
+                        std::make_unique<MemberAccessNode>(instName, fieldName, false),
+                        std::move(rhs)
+                    )
+                )
+            );
+        }
+
+        // ── obj.field = val; ──────────────────────────────────────────
         if (position + 1 < tokens.size() &&
             tokens[position + 1].type == TokenType::Dot &&
             position + 2 < tokens.size() &&
             tokens[position + 2].type == TokenType::Identifier &&
             position + 3 < tokens.size() &&
             tokens[position + 3].type == TokenType::Equals) {
-            std::string instName  = advance().value; // obj
-            advance();                               // .
-            std::string fieldName = advance().value; // field
-            advance();                               // =
+            std::string instName  = advance().value;
+            advance(); // .
+            std::string fieldName = advance().value;
+            advance(); // =
             auto val = parseLogicalOr();
             consume(TokenType::Semicolon, ";");
             return std::make_unique<ExpressionStatement>(
@@ -1471,7 +1573,25 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
             );
         }
 
-        // Plain assignment: varName = expr;
+        // ── varName += expr; ──────────────────────────────────────────
+        if (position + 1 < tokens.size() && isCompound(tokens[position + 1].type)) {
+            std::string varName = advance().value;
+            std::string op = compoundOp(advance().type);
+            auto rhs = parseLogicalOr();
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<AssignExprNode>(
+                    varName,
+                    std::make_unique<BinaryOpNode>(
+                        op,
+                        std::make_unique<VariableNode>(varName),
+                        std::move(rhs)
+                    )
+                )
+            );
+        }
+
+        // ── varName = expr; ───────────────────────────────────────────
         if (position + 1 < tokens.size() &&
             tokens[position + 1].type == TokenType::Equals) {
             std::string varName = advance().value;
@@ -1483,7 +1603,7 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
             );
         }
 
-        // Detect class instantiation: ClassName varName(args);
+        // ── ClassName varName(args); ───────────────────────────────────
         if (position + 1 < tokens.size() &&
             tokens[position + 1].type == TokenType::Identifier &&
             position + 2 < tokens.size() &&
@@ -1505,13 +1625,39 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                 return std::make_unique<InstanceCreateNode>(cls, inst, std::move(iargs));
             }
         }
+
         auto e = parseLogicalOr();
         consume(TokenType::Semicolon, ";");
         return std::make_unique<ExpressionStatement>(std::move(e));
     }
 
-    // FIX: self.field = val; — dotted lvalue assignment from inside a class method
     if (t.type == TokenType::Self) {
+        // ── self.field += expr; ───────────────────────────────────────
+        if (position + 1 < tokens.size() &&
+            tokens[position + 1].type == TokenType::Dot &&
+            position + 2 < tokens.size() &&
+            tokens[position + 2].type == TokenType::Identifier &&
+            position + 3 < tokens.size() &&
+            isCompound(tokens[position + 3].type)) {
+            advance(); // self
+            advance(); // .
+            std::string fieldName = advance().value;
+            std::string op = compoundOp(advance().type);
+            auto rhs = parseLogicalOr();
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<AssignExprNode>(
+                    fieldName,
+                    std::make_unique<BinaryOpNode>(
+                        op,
+                        std::make_unique<SelfAccessNode>(fieldName, false),
+                        std::move(rhs)
+                    )
+                )
+            );
+        }
+
+        // ── self.field = val; ─────────────────────────────────────────
         if (position + 1 < tokens.size() &&
             tokens[position + 1].type == TokenType::Dot &&
             position + 2 < tokens.size() &&
@@ -1528,6 +1674,7 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                 std::make_unique<AssignExprNode>(fieldName, std::move(val))
             );
         }
+
         auto e = parseLogicalOr();
         consume(TokenType::Semicolon, ";");
         return std::make_unique<ExpressionStatement>(std::move(e));

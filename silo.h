@@ -9,11 +9,12 @@
 #include <iostream>
 #include <functional>
 
-// --- Token Definitions ---
+// ── Token Types ──────────────────────────────────────────────────────
 enum TokenType {
     // Keywords
     TypeInt, TypeString, TypeFloat, TypeBool,
     Return, Print, If, Else, While, For, DoWhile,
+    Break, Continue,
     True, False,
     Cast, StaticCast, Free,
     Class, Constructor, Private, Protected, Global, Void,
@@ -32,6 +33,11 @@ enum TokenType {
     Percent,        // %
     PlusPlus,       // ++
     MinusMinus,     // --
+    PlusEquals,     // +=
+    MinusEquals,    // -=
+    TimesEquals,    // *=
+    DivEquals,      // /=
+    ModEquals,      // %=
     LeftParen,      // (
     RightParen,     // )
     LeftBrace,      // {
@@ -65,61 +71,53 @@ struct Token {
 
 // Forward declarations
 struct ASTNode;
-class BlockNode;
 struct ExprNode;
+class BlockNode;
 
-// --- Field definition for class/struct members ---
+// ── Field definition ─────────────────────────────────────────────────
 struct FieldDef {
     std::string access;   // "private", "protected", "global", "public"
     std::string type;
     std::string value;
-    bool isConst = false; // const fields cannot be reassigned
-    std::shared_ptr<ExprNode> initExpr; // for const fields initialized with expressions
+    bool isConst = false;
+    std::shared_ptr<ExprNode> initExpr; // stored for deferred evaluation at instantiation
 };
 
-// --- Method definition for class members ---
+// ── Method definition ─────────────────────────────────────────────────
 struct MethodDef {
     std::string returnType;
     std::vector<std::pair<std::string, std::string>> params;
     std::shared_ptr<BlockNode> body;
-    // For constructor: -> (field1, field2, ...) style bindings
     std::vector<std::string> constructorBindings;
-    // For constructor: -> ParentClass(arg1, arg2, ...) style
     std::string parentConstructorClass;
     std::vector<std::string> parentConstructorArgs;
-    // Which class this method belongs to (for access checking)
     std::string ownerClass;
 };
 
-// --- Runtime Value ---
+// ── Runtime Value ─────────────────────────────────────────────────────
 struct RuntimeValue {
-    std::string type;   // "int", "string", "float", "bool", "class", "struct", "instance:X", "function", etc.
+    std::string type;
     std::string value;
-    bool isConst = false; // const variables cannot be reassigned
+    bool isConst = false;
     std::vector<std::string> arrayElements;
 
-    // For plain functions
     std::vector<std::pair<std::string, std::string>> params;
     std::shared_ptr<ASTNode> body;
 
-    // For class definitions & instances
-    std::string parentClass;                    // parent class name (inheritance)
-    std::string instanceOf;                     // for instances: which class
-    std::map<std::string, FieldDef> fields;     // field name -> FieldDef
-    std::map<std::string, MethodDef> methods;   // method name -> MethodDef
+    std::string parentClass;
+    std::string instanceOf;
+    std::map<std::string, FieldDef>  fields;
+    std::map<std::string, MethodDef> methods;
 };
 
-// Global Symbol Table
 extern std::map<std::string, RuntimeValue> SYMBOL_TABLE;
-
-// Current execution context (class name we're inside, instance name)
 extern std::string CURRENT_CLASS;
 extern std::string CURRENT_INSTANCE;
 
 void printSymbolTable();
 void clear();
 
-// --- AST Node Base Classes ---
+// ── AST Node Base Classes ─────────────────────────────────────────────
 struct ASTNode {
     virtual ~ASTNode() = default;
     virtual void execute() = 0;
@@ -155,12 +153,8 @@ public:
     std::string evaluate() const override;
 };
 
-// f"Hello {name}" — stores parts: alternating literal and expr strings
 class FStringNode : public ExprNode {
 public:
-    // parts: vector of (isExpr, content)
-    // isExpr=false => literal string
-    // isExpr=true  => variable/expression name to evaluate
     std::vector<std::pair<bool, std::string>> parts;
     FStringNode(std::vector<std::pair<bool, std::string>> p);
     std::string evaluate() const override;
@@ -183,16 +177,14 @@ public:
     std::string evaluate() const override;
 };
 
-// i++ or i-- (postfix)
 class PostfixOpNode : public ExprNode {
     std::string varName;
-    std::string op; // "++" or "--"
+    std::string op;
 public:
     PostfixOpNode(const std::string& name, const std::string& op);
     std::string evaluate() const override;
 };
 
-// Assignment as expression: varName = expr
 class AssignExprNode : public ExprNode {
     std::string varName;
     std::unique_ptr<ExprNode> value;
@@ -201,7 +193,6 @@ public:
     std::string evaluate() const override;
 };
 
-// Legacy cast: cast<type>(varName) or @varName
 class CastOrRefNode : public ExprNode {
     std::string operation;
     std::string targetVar;
@@ -210,7 +201,6 @@ public:
     std::string evaluate() const override;
 };
 
-// Full expression cast: cast<type>(anyExpr) — e.g. cast<string>(sqrt(67))
 class CastExprNode : public ExprNode {
     std::string targetType;
     std::unique_ptr<ExprNode> expr;
@@ -235,7 +225,6 @@ public:
     std::string evaluate() const override;
 };
 
-// self.fieldName or self.method(args)
 class SelfAccessNode : public ExprNode {
     std::string memberName;
     bool isCall;
@@ -246,7 +235,6 @@ public:
     std::string evaluate() const override;
 };
 
-// instance.field or instance.method(args)
 class MemberAccessNode : public ExprNode {
     std::string instanceName;
     std::string memberName;
@@ -328,6 +316,16 @@ public:
     void execute() override;
 };
 
+class BreakNode : public ASTNode {
+public:
+    void execute() override;
+};
+
+class ContinueNode : public ASTNode {
+public:
+    void execute() override;
+};
+
 class IfNode : public ASTNode {
     std::unique_ptr<ExprNode> condition;
     std::unique_ptr<BlockNode> thenBlock;
@@ -374,16 +372,15 @@ class FunctionDefNode : public ASTNode {
     std::shared_ptr<BlockNode> body;
 public:
     FunctionDefNode(const std::string& rt, const std::string& n,
-                const std::vector<std::pair<std::string, std::string>> p,
-                std::shared_ptr<BlockNode> b);
+                    const std::vector<std::pair<std::string, std::string>> p,
+                    std::shared_ptr<BlockNode> b);
     void execute() override;
 };
 
-// Defines a class (fields + methods) into SYMBOL_TABLE
 class ClassDefNode : public ASTNode {
     std::string className;
-    std::string parentName; // "" if no parent
-    std::map<std::string, FieldDef> fields;
+    std::string parentName;
+    std::map<std::string, FieldDef>  fields;
     std::map<std::string, MethodDef> methods;
 public:
     ClassDefNode(const std::string& name, const std::string& parent,
@@ -392,7 +389,6 @@ public:
     void execute() override;
 };
 
-// Defines a struct (named set of const/non-const fields, instantiated immediately)
 class StructDefNode : public ASTNode {
     std::string structName;
     std::map<std::string, FieldDef> fields;
@@ -401,7 +397,6 @@ public:
     void execute() override;
 };
 
-// Creates an instance: Vehicle honda("12345", 94.5, "Honda");
 class InstanceCreateNode : public ASTNode {
     std::string className;
     std::string instanceName;
@@ -412,7 +407,6 @@ public:
     void execute() override;
 };
 
-// Member access as a statement (e.g. toyota.status(true);)
 class MemberAccessStatement : public ASTNode {
     std::unique_ptr<MemberAccessNode> node;
 public:
@@ -442,7 +436,6 @@ class Parser {
     Token peek();
     Token advance();
     Token consume(TokenType type, const std::string& err);
-
     std::string parseTypeName();
 
 public:

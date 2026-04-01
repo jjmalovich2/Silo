@@ -1,7 +1,178 @@
 #include "silo.h"
 #include <cctype>
+#include <stdexcept>
 
 Lexer::Lexer(const std::string& source) : src(source), pos(0) {}
+
+char Lexer::peek() {
+    return (pos < src.size()) ? src[pos] : '\0';
+}
+
+void Lexer::skipWhitespace() {
+    while (pos < src.size()) {
+        if (std::isspace((unsigned char)src[pos])) {
+            pos++;
+        } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '/') {
+            while (pos < src.size() && src[pos] != '\n') pos++;
+        } else {
+            break;
+        }
+    }
+}
+
+Token Lexer::nextToken() {
+    skipWhitespace();
+    if (pos >= src.size()) return {TokenType::EndOfFile, ""};
+
+    char c = src[pos];
+
+    // f-string: f"..."
+    if (c == 'f' && pos + 1 < src.size() && src[pos + 1] == '"') {
+        pos += 2;
+        std::string val;
+        while (pos < src.size() && src[pos] != '"') {
+            if (src[pos] == '\\' && pos + 1 < src.size()) {
+                pos++;
+                switch (src[pos]) {
+                    case 'n':  val += '\n'; break;
+                    case 't':  val += '\t'; break;
+                    case '"':  val += '"';  break;
+                    case '\\': val += '\\'; break;
+                    default:   val += src[pos]; break;
+                }
+                pos++;
+            } else {
+                val += src[pos++];
+            }
+        }
+        if (pos < src.size()) pos++;
+        return {TokenType::FStringLiteral, val};
+    }
+
+    // string literal: "..."
+    if (c == '"') {
+        pos++;
+        std::string val;
+        while (pos < src.size() && src[pos] != '"') {
+            if (src[pos] == '\\' && pos + 1 < src.size()) {
+                pos++;
+                switch (src[pos]) {
+                    case 'n':  val += '\n'; break;
+                    case 't':  val += '\t'; break;
+                    case '"':  val += '"';  break;
+                    case '\\': val += '\\'; break;
+                    default:   val += src[pos]; break;
+                }
+                pos++;
+            } else {
+                val += src[pos++];
+            }
+        }
+        if (pos < src.size()) pos++;
+        return {TokenType::StringLiteral, val};
+    }
+
+    // number literal
+    if (std::isdigit((unsigned char)c)) {
+        std::string val;
+        bool hasDot = false;
+        while (pos < src.size() &&
+               (std::isdigit((unsigned char)src[pos]) || (src[pos] == '.' && !hasDot))) {
+            if (src[pos] == '.') hasDot = true;
+            val += src[pos++];
+        }
+        return {TokenType::Number, val};
+    }
+
+    // identifier or keyword
+    if (std::isalpha((unsigned char)c) || c == '_') {
+        std::string val;
+        while (pos < src.size() &&
+               (std::isalnum((unsigned char)src[pos]) || src[pos] == '_')) {
+            val += src[pos++];
+        }
+        if (val == "int")         return {TokenType::TypeInt,    val};
+        if (val == "string")      return {TokenType::TypeString,  val};
+        if (val == "float")       return {TokenType::TypeFloat,   val};
+        if (val == "bool")        return {TokenType::TypeBool,    val};
+        if (val == "void")        return {TokenType::Void,        val};
+        if (val == "return")      return {TokenType::Return,      val};
+        if (val == "if")          return {TokenType::If,          val};
+        if (val == "else")        return {TokenType::Else,        val};
+        if (val == "while")       return {TokenType::While,       val};
+        if (val == "for")         return {TokenType::For,         val};
+        if (val == "do")          return {TokenType::DoWhile,     val};
+        if (val == "break")       return {TokenType::Break,       val};
+        if (val == "continue")    return {TokenType::Continue,    val};
+        if (val == "true")        return {TokenType::True,        val};
+        if (val == "false")       return {TokenType::False,       val};
+        if (val == "cast")        return {TokenType::Cast,        val};
+        if (val == "static_cast") return {TokenType::StaticCast,  val};
+        if (val == "free")        return {TokenType::Free,        val};
+        if (val == "class")       return {TokenType::Class,       val};
+        if (val == "constructor") return {TokenType::Constructor, val};
+        if (val == "private")     return {TokenType::Private,     val};
+        if (val == "protected")   return {TokenType::Protected,   val};
+        if (val == "global")      return {TokenType::Global,      val};
+        if (val == "self")        return {TokenType::Self,        val};
+        if (val == "struct")      return {TokenType::Struct,      val};
+        if (val == "const")       return {TokenType::Const,       val};
+        return {TokenType::Identifier, val};
+    }
+
+    pos++;
+
+    switch (c) {
+        case '+':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::PlusEquals,  "+="}; }
+            if (pos < src.size() && src[pos] == '+') { pos++; return {TokenType::PlusPlus,     "++"}; }
+            return {TokenType::Plus, "+"};
+        case '-':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::MinusEquals,  "-="}; }
+            if (pos < src.size() && src[pos] == '-') { pos++; return {TokenType::MinusMinus,    "--"}; }
+            if (pos < src.size() && src[pos] == '>') { pos++; return {TokenType::Arrow,         "->"}; }
+            return {TokenType::Minus, "-"};
+        case '*':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::TimesEquals,  "*="}; }
+            return {TokenType::Asterisk, "*"};
+        case '/':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::DivEquals,    "/="}; }
+            return {TokenType::Slash, "/"};
+        case '%':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::ModEquals,    "%="}; }
+            return {TokenType::Percent, "%"};
+        case '=':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::EqualEqual,   "=="}; }
+            return {TokenType::Equals, "="};
+        case '!':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::NotEqual,     "!="}; }
+            return {TokenType::Bang, "!"};
+        case '<':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::LessEqual,    "<="}; }
+            return {TokenType::LessThan, "<"};
+        case '>':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::GreaterEqual, ">="}; }
+            return {TokenType::GreaterThan, ">"};
+        case '&':
+            if (pos < src.size() && src[pos] == '&') { pos++; return {TokenType::AndAnd, "&&"}; }
+            return {TokenType::Ampersand, "&"};
+        case '|':
+            if (pos < src.size() && src[pos] == '|') { pos++; return {TokenType::OrOr, "||"}; }
+            return nextToken();
+        case '(': return {TokenType::LeftParen,    "("};
+        case ')': return {TokenType::RightParen,   ")"};
+        case '{': return {TokenType::LeftBrace,    "{"};
+        case '}': return {TokenType::RightBrace,   "}"};
+        case '[': return {TokenType::LeftBracket,  "["};
+        case ']': return {TokenType::RightBracket, "]"};
+        case ';': return {TokenType::Semicolon,    ";"};
+        case ',': return {TokenType::Comma,        ","};
+        case '.': return {TokenType::Dot,          "."};
+        case '~': return {TokenType::Tilde,        "~"};
+        case '@': return {TokenType::At,           "@"};
+        default:  return nextToken(); // skip unknown chars
+    }
+}
 
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
@@ -12,166 +183,4 @@ std::vector<Token> Lexer::tokenize() {
     }
     tokens.push_back({TokenType::EndOfFile, ""});
     return tokens;
-}
-
-void Lexer::skipWhitespace() {
-    while (pos < src.length() && isspace(static_cast<unsigned char>(src[pos]))) {
-        pos++;
-    }
-}
-
-char Lexer::peek() {
-    if (pos < src.length()) return src[pos];
-    return '\0';
-}
-
-Token Lexer::nextToken() {
-    skipWhitespace();
-
-    if (pos >= src.length()) return {TokenType::EndOfFile, ""};
-
-    char current = src[pos];
-
-    // 1. Skip line comments (// ...)
-    if (current == '/' && pos + 1 < src.length() && src[pos + 1] == '/') {
-        while (pos < src.length() && src[pos] != '\n') pos++;
-        return nextToken();
-    }
-
-    // 2. F-strings: f"..."
-    if (current == 'f' && pos + 1 < src.length() && src[pos + 1] == '"') {
-        pos += 2; // skip f and opening "
-        std::string raw;
-        while (pos < src.length() && src[pos] != '"') {
-            if (src[pos] == '\\' && pos + 1 < src.length() && src[pos+1] == '"') {
-                raw += '"';
-                pos += 2;
-            } else {
-                raw += src[pos];
-                pos++;
-            }
-        }
-        if (pos < src.length()) pos++; // skip closing "
-        return {TokenType::FStringLiteral, raw};
-    }
-
-    // 3. Identifiers & Keywords
-    if (isalpha(static_cast<unsigned char>(current)) || current == '_') {
-        std::string result;
-        while (pos < src.length() && (isalnum(static_cast<unsigned char>(src[pos])) || src[pos] == '_')) {
-            result += src[pos];
-            pos++;
-        }
-
-        // Type keywords
-        if (result == "int")    return {TokenType::TypeInt,    "int"};
-        if (result == "string") return {TokenType::TypeString, "string"};
-        if (result == "float")  return {TokenType::TypeFloat,  "float"};
-        if (result == "double") return {TokenType::TypeFloat,  "double"};
-        if (result == "bool")   return {TokenType::TypeBool,   "bool"};
-        if (result == "void")   return {TokenType::Void,       "void"};
-
-        // Boolean literals
-        if (result == "true")  return {TokenType::True,  "true"};
-        if (result == "false") return {TokenType::False, "false"};
-
-        // Control flow
-        if (result == "return") return {TokenType::Return,   "return"};
-        if (result == "if")     return {TokenType::If,       "if"};
-        if (result == "else")   return {TokenType::Else,     "else"};
-        if (result == "while")  return {TokenType::While,    "while"};
-        if (result == "for")    return {TokenType::For,      "for"};
-        if (result == "do")     return {TokenType::DoWhile,  "do"};
-
-        // Memory & casting
-        if (result == "free")        return {TokenType::Free,       "free"};
-        if (result == "cast")        return {TokenType::Cast,       "cast"};
-        if (result == "static_cast") return {TokenType::StaticCast, "static_cast"};
-
-        // Class-related
-        if (result == "class")       return {TokenType::Class,       "class"};
-        if (result == "constructor") return {TokenType::Constructor, "constructor"};
-        if (result == "private")     return {TokenType::Private,     "private"};
-        if (result == "protected")   return {TokenType::Protected,   "protected"};
-        if (result == "global")      return {TokenType::Global,      "global"};
-        if (result == "self")        return {TokenType::Self,        "self"};
-
-        // Struct & const
-        if (result == "struct") return {TokenType::Struct, "struct"};
-        if (result == "const")  return {TokenType::Const,  "const"};
-
-        return {TokenType::Identifier, result};
-    }
-
-    // 4. Numbers (int or float)
-    if (isdigit(static_cast<unsigned char>(current))) {
-        std::string result;
-        bool hasDecimal = false;
-        while (pos < src.length() && (isdigit(static_cast<unsigned char>(src[pos])) || src[pos] == '.')) {
-            if (src[pos] == '.') {
-                if (hasDecimal) break;
-                hasDecimal = true;
-            }
-            result += src[pos];
-            pos++;
-        }
-        return {TokenType::Number, result};
-    }
-
-    // 5. Regular strings: "..."
-    if (current == '"') {
-        pos++;
-        std::string result;
-        while (pos < src.length() && src[pos] != '"') {
-            result += src[pos];
-            pos++;
-        }
-        if (pos < src.length()) pos++;
-        return {TokenType::StringLiteral, result};
-    }
-
-    // 6. Symbols (multi-char first)
-    pos++;
-    switch (current) {
-        case '=':
-            if (peek() == '=') { pos++; return {TokenType::EqualEqual,  "=="}; }
-            return {TokenType::Equals, "="};
-        case '!':
-            if (peek() == '=') { pos++; return {TokenType::NotEqual,    "!="}; }
-            return {TokenType::Bang, "!"};
-        case '<':
-            if (peek() == '=') { pos++; return {TokenType::LessEqual,   "<="}; }
-            return {TokenType::LessThan, "<"};
-        case '>':
-            if (peek() == '=') { pos++; return {TokenType::GreaterEqual,">="}; }
-            return {TokenType::GreaterThan, ">"};
-        case '&':
-            if (peek() == '&') { pos++; return {TokenType::AndAnd,      "&&"}; }
-            return {TokenType::Ampersand, "&"};
-        case '|':
-            if (peek() == '|') { pos++; return {TokenType::OrOr,        "||"}; }
-            return {TokenType::EndOfFile, ""}; // bare | not supported
-        case '+':
-            if (peek() == '+') { pos++; return {TokenType::PlusPlus,    "++"}; }
-            return {TokenType::Plus, "+"};
-        case '-':
-            if (peek() == '-') { pos++; return {TokenType::MinusMinus,  "--"}; }
-            if (peek() == '>') { pos++; return {TokenType::Arrow,       "->"}; }
-            return {TokenType::Minus, "-"};
-        case '~': return {TokenType::Tilde,        "~"};
-        case '.': return {TokenType::Dot,          "."};
-        case ';': return {TokenType::Semicolon,    ";"};
-        case '(': return {TokenType::LeftParen,    "("};
-        case ')': return {TokenType::RightParen,   ")"};
-        case '{': return {TokenType::LeftBrace,    "{"};
-        case '}': return {TokenType::RightBrace,   "}"};
-        case '[': return {TokenType::LeftBracket,  "["};
-        case ']': return {TokenType::RightBracket, "]"};
-        case ',': return {TokenType::Comma,        ","};
-        case '*': return {TokenType::Asterisk,     "*"};
-        case '@': return {TokenType::At,           "@"};
-        case '/': return {TokenType::Slash,        "/"};
-        case '%': return {TokenType::Percent,      "%"};
-        default:  return {TokenType::EndOfFile,    ""};
-    }
 }
