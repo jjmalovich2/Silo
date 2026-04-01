@@ -66,6 +66,7 @@ struct Token {
 // Forward declarations
 struct ASTNode;
 class BlockNode;
+struct ExprNode;
 
 // --- Field definition for class/struct members ---
 struct FieldDef {
@@ -73,6 +74,7 @@ struct FieldDef {
     std::string type;
     std::string value;
     bool isConst = false; // const fields cannot be reassigned
+    std::shared_ptr<ExprNode> initExpr; // for const fields initialized with expressions
 };
 
 // --- Method definition for class members ---
@@ -256,6 +258,16 @@ public:
     std::string evaluate() const override;
 };
 
+class MemberAssignNode : public ExprNode {
+    std::string instanceName;
+    std::string fieldName;
+    std::unique_ptr<ExprNode> value;
+public:
+    MemberAssignNode(const std::string& inst, const std::string& field,
+                     std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
 // =====================================================================
 // STATEMENT NODES
 // =====================================================================
@@ -359,11 +371,11 @@ class FunctionDefNode : public ASTNode {
     std::string returnType;
     std::string name;
     std::vector<std::pair<std::string, std::string>> params;
-    std::unique_ptr<BlockNode> body;
+    std::shared_ptr<BlockNode> body;
 public:
     FunctionDefNode(const std::string& rt, const std::string& n,
-                    const std::vector<std::pair<std::string, std::string>> p,
-                    std::unique_ptr<BlockNode> b);
+                const std::vector<std::pair<std::string, std::string>> p,
+                std::shared_ptr<BlockNode> b);
     void execute() override;
 };
 
