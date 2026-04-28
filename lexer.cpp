@@ -94,6 +94,7 @@ Token Lexer::nextToken() {
         if (val == "int")         return {TokenType::TypeInt,    val};
         if (val == "string")      return {TokenType::TypeString,  val};
         if (val == "float")       return {TokenType::TypeFloat,   val};
+        if (val == "double")      return {TokenType::TypeFloat,   val};
         if (val == "bool")        return {TokenType::TypeBool,    val};
         if (val == "void")        return {TokenType::Void,        val};
         if (val == "return")      return {TokenType::Return,      val};

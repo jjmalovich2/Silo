@@ -1,8 +1,3 @@
-struct Math {
-    const double PI = 3.14159265358979;
-    const double E  = 2.71828182845904;
-}
-
 double abs(double val) {
     if (val < 0) { return val - val - val; }
     return val;

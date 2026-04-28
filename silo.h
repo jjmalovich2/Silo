@@ -125,6 +125,7 @@ struct ASTNode {
 
 struct ExprNode : public ASTNode {
     virtual std::string evaluate() const = 0;
+    virtual std::string getExprType() const { return "unknown"; }
     void execute() override { evaluate(); }
 };
 
@@ -220,9 +221,12 @@ public:
 class FunctionCallNode : public ExprNode {
     std::string funcName;
     std::vector<std::unique_ptr<ExprNode>> args;
+    std::string templateType; // optional type parameter, e.g. input<int>
 public:
-    FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a);
+    FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a,
+                     const std::string& t = "");
     std::string evaluate() const override;
+    std::string getExprType() const override;
 };
 
 class SelfAccessNode : public ExprNode {

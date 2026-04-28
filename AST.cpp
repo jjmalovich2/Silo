@@ -334,7 +334,16 @@ VariableNode::VariableNode(const std::string& n) : name(n) {}
 CastOrRefNode::CastOrRefNode(const std::string& op, const std::string& var) : operation(op), targetVar(var) {}
 CastExprNode::CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e) : targetType(t), expr(std::move(e)) {}
 ArrayAccessNode::ArrayAccessNode(const std::string& name, int idx) : arrayName(name), index(idx) {}
-FunctionCallNode::FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a) : funcName(name), args(std::move(a)) {}
+FunctionCallNode::FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a,
+                                   const std::string& t)
+    : funcName(name), args(std::move(a)), templateType(t) {}
+
+std::string FunctionCallNode::getExprType() const {
+    if (funcName == "input")
+        return templateType.empty() ? "string" : templateType;
+    return "unknown";
+}
+
 VarDeclarationNode::VarDeclarationNode(const std::string& t, bool p, bool c, const std::string& id, std::unique_ptr<ExprNode> init) : baseType(t), isPointer(p), isConst(c), identifier(id), initializer(std::move(init)) {}
 ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::string& n, int s) : type(t), name(n), size(s) {}
 RetypeNode::RetypeNode(const std::string& t, const std::string& v) : newType(t), targetVar(v) {}
@@ -598,7 +607,7 @@ std::string ArrayAccessNode::evaluate() const {
 }
 
 std::string FunctionCallNode::evaluate() const {
-    // ── builtin: input(prompt?) ──────────────────────────────────────
+    // ── builtin: input(prompt?) with optional template type ───────────
     if (funcName == "input") {
         if (!args.empty()) {
             std::cout << args[0]->evaluate();
@@ -606,6 +615,35 @@ std::string FunctionCallNode::evaluate() const {
         }
         std::string line;
         std::getline(std::cin, line);
+        if (templateType.empty()) return line; // default: string
+
+        // convert to requested template type and return as string representation
+        if (templateType.find("int") != std::string::npos) {
+            try {
+                int v = std::stoi(line);
+                return std::to_string(v);
+            } catch (...) {
+                throw std::runtime_error("Input conversion error: expected int");
+            }
+        }
+        if (templateType.find("float") != std::string::npos ||
+            templateType.find("double") != std::string::npos) {
+            try {
+                double v = std::stod(line);
+                return formatNum(v);
+            } catch (...) {
+                throw std::runtime_error("Input conversion error: expected float/double");
+            }
+        }
+        if (templateType.find("bool") != std::string::npos) {
+            if (line == "true") return "1";
+            if (line == "false") return "0";
+            try { double v = std::stod(line); return (v != 0) ? "1" : "0"; } catch (...) {
+                throw std::runtime_error("Input conversion error: expected bool");
+            }
+        }
+
+        // fallback: return string
         return line;
     }
 
@@ -744,6 +782,23 @@ void VarDeclarationNode::execute() {
         throw std::runtime_error("Cannot reassign const variable: " + identifier);
 
     std::string val = initializer ? initializer->evaluate() : "0";
+
+    // Type enforcement: infer initializer type and ensure compatibility with declared type
+    if (!isPointer) {
+        std::string initType = initializer ? initializer->getExprType() : "unknown";
+        if (initType == "unknown")
+            initType = inferType(val);
+        // allow unknown (e.g., when value can't be inferred) to pass
+        if (initType != "unknown") {
+            // allow int -> float widening
+            bool ok = (baseType == "float" && initType == "int");
+            if (!ok && baseType != initType) {
+                throw std::runtime_error("Type mismatch: variable '" + identifier + "' expects "
+                                         + baseType + " but got " + initType);
+            }
+        }
+    }
+
     RuntimeValue rv;
     rv.type    = baseType + (isPointer ? "*" : "");
     rv.value   = val;
@@ -994,8 +1049,11 @@ Token Parser::advance() {
     return (position < tokens.size()) ? tokens[position++] : Token{TokenType::EndOfFile, ""};
 }
 Token Parser::consume(TokenType type, const std::string& err) {
-    if (peek().type != type)
-        throw std::runtime_error(err + " Got: '" + peek().value + "'");
+    if (peek().type != type) {
+        std::stringstream ss;
+        ss << err << " Got: '" << peek().value << "' at position " << position;
+        throw std::runtime_error(ss.str());
+    }
     return advance();
 }
 
@@ -1115,6 +1173,26 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
             return std::make_unique<MemberAccessNode>(name, member, false);
         }
 
+        // optional template/type parameter, e.g. input<int>
+        std::string templateType = "";
+        if (peek().type == TokenType::LessThan) {
+            size_t savedPos = position;
+            advance(); // <
+            if (peek().type == TokenType::TypeInt    || peek().type == TokenType::TypeFloat ||
+                peek().type == TokenType::TypeString || peek().type == TokenType::TypeBool  ||
+                peek().type == TokenType::Void       || peek().type == TokenType::Identifier) {
+                templateType = advance().value;
+                if (peek().type == TokenType::GreaterThan && position + 1 < tokens.size() &&
+                    tokens[position + 1].type == TokenType::LeftParen) {
+                    advance(); // >
+                } else {
+                    position = savedPos;
+                    templateType = "";
+                }
+            } else {
+                position = savedPos;
+            }
+        }
         if (peek().type == TokenType::LeftParen) {
             advance();
             std::vector<std::unique_ptr<ExprNode>> args;
@@ -1125,7 +1203,7 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
                 } while (peek().type == TokenType::Comma);
             }
             consume(TokenType::RightParen, ")");
-            return std::make_unique<FunctionCallNode>(name, std::move(args));
+            return std::make_unique<FunctionCallNode>(name, std::move(args), templateType);
         }
 
         if (peek().type == TokenType::LeftBracket) {
