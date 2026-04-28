@@ -22,6 +22,9 @@
   - [Classes](#classes)
 - [Access Modifiers](#access-modifiers)
 - [Inheritance](#inheritance)
+- [Libraries](#libraries)
+  - [Math](#math)
+  - [File I/O (fstream)](#file-io-fstream)
 - [Full Example Programs](#full-example-programs)
 - [Architecture](#architecture)
 - [Building Silo](#building-silo)
@@ -239,17 +242,81 @@ greet("Silo"); // Hello, Silo!
 
 ### Arrays
 
-Arrays are declared with a fixed size. All elements are initialized to `0`.
+Silo arrays are backed by native C++ `std::vector` — they're dynamic, fast, and have no hardcoded capacity limit.
 
+#### Declaration
+
+```silo
+int nums[];          // empty dynamic array
+int nums[10];        // fixed size, zero-filled
+int nums[] = [1, 2, 3];      // dynamic, inferred size
+int nums[5] = [10, 20, 30];  // fixed size with initializer
 ```
-int[5] scores;
 
-// Array access uses bracket notation
-scores[0] = 95;
-scores[1] = 87;
+#### Access & Assignment
 
-print(scores[0]); // 95
-print(scores[1]); // 87
+Index with constants or variables. Full assignment and compound assignment are supported.
+
+```silo
+int arr[] = [10, 20, 30];
+arr[0] = 99;
+int i = 1;
+arr[i] = 50;       // variable index
+arr[2] += 5;       // compound assignment
+print(arr[0]);     // 99
+```
+
+#### Array Methods (C++-style)
+
+Call methods directly on any array variable:
+
+| Method | Description |
+|--------|-------------|
+| `arr.push(val)` / `arr.append(val)` | Add to end |
+| `arr.pop()` | Remove and return last element |
+| `arr.insert(idx, val)` | Insert at index |
+| `arr.erase(idx)` / `arr.delete(idx)` / `arr.remove(idx)` | Remove at index |
+| `arr.size()` / `arr.length()` | Number of elements |
+| `arr.clear()` | Remove all elements |
+| `arr.resize(n)` | Resize to `n` (fills with `0`) |
+| `arr.front()` | First element |
+| `arr.back()` | Last element |
+| `arr.empty()` | `1` if empty, `0` otherwise |
+
+```silo
+int nums[];
+nums.push(10);
+nums.push(20);
+nums.push(30);
+print(nums.size());      // 3
+print(nums.pop());       // 30
+nums.insert(1, 99);
+nums.erase(0);
+print(nums.front());     // 99
+print(nums.back());      // 20
+```
+
+#### Functional Style
+
+All array operations are also available as global functions:
+
+```silo
+string words[] = ["hello", "world"];
+push(words, "!");
+pop(words);
+insert(words, 0, "hi");
+erase(words, 1);
+print(size(words));
+```
+
+#### Array Literals
+
+Array literals can be printed directly or reassigned:
+
+```silo
+print([1, 2, 3]);          // [1, 2, 3]
+int nums[] = [1, 2, 3];
+nums = [99, 88, 77];       // reassign entire array
 ```
 
 ---
@@ -521,6 +588,91 @@ class SportsTruck~Truck {
     void boost() {
         fuel = fuel + 10.0; // works — fuel is protected in Vehicle
     }
+}
+```
+
+---
+
+## Libraries
+
+Silo ships with built-in libraries located in `lib/`. Include them with `#include <name>` or `#include "lib/name.sl"`.
+
+### Math
+
+Include: `#include <math>`
+
+The math library provides common mathematical functions implemented in pure Silo.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `abs(val)` | Absolute value | `abs(-5.5)` → `5.5` |
+| `clamp(val, lo, hi)` | Clamp between bounds | `clamp(15, 0, 10)` → `10` |
+| `exp(base, exponent)` | Power | `exp(2, 3)` → `8` |
+| `sqrt(val)` | Square root | `sqrt(16)` → `4` |
+| `max(a, b)` / `min(a, b)` | Max / min | `max(3, 7)` → `7` |
+| `round(val, decimals)` | Round to N decimals | `round(3.14159, 2)` → `3.14` |
+| `floor(v)` / `ceil(v)` | Floor / ceiling | `floor(3.7)` → `3` |
+| `sign(v)` | Sign (-1, 0, 1) | `sign(-10)` → `-1` |
+| `isEven(n)` / `isOdd(n)` | Parity check | `isEven(4)` → `1` |
+| `log(x)` / `log10(x)` | Natural / base-10 log | `log(10)` → `~2.30` |
+| `factorial(n)` | Factorial | `factorial(5)` → `120` |
+| `toRadians(deg)` | Degrees to radians | `toRadians(180)` → `~3.14` |
+| `sin(x)` / `cos(x)` / `tan(x)` | Trigonometry | `sin(0)` → `0` |
+| `gcd(a, b)` / `lcm(a, b)` | GCD / LCM | `gcd(12, 8)` → `4` |
+| `lerp(a, b, t)` | Linear interpolation | `lerp(0, 10, 0.5)` → `5` |
+
+```silo
+#include <math>
+
+float hypotenuse(float a, float b) {
+    return sqrt(a * a + b * b);
+}
+
+print(hypotenuse(3.0, 4.0)); // 5.0
+```
+
+### File I/O (fstream)
+
+Include: `#include <fstream>`
+
+File operations are backed by native C++ `fstream` for full speed.
+
+#### Global Functions
+
+| Function | Description |
+|----------|-------------|
+| `readFile(path)` | Read entire file as string |
+| `writeFile(path, content)` | Overwrite/create file |
+| `appendFile(path, content)` | Append to file |
+| `fileExists(path)` | `1` if file exists |
+| `deleteFile(path)` | Delete file (`1` on success) |
+| `renameFile(old, new)` | Rename/move file |
+| `fileSize(path)` | Size in bytes |
+
+```silo
+#include <fstream>
+
+writeFile("data.txt", "Hello, World!");
+appendFile("data.txt", "\nSecond line.");
+string content = readFile("data.txt");
+print(content);
+print("Size: " + fileSize("data.txt"));
+deleteFile("data.txt");
+```
+
+#### FileStream Class
+
+For OOP-style file handling:
+
+```silo
+#include <fstream>
+
+FileStream fs("log.txt");
+fs.write("Session started\n");
+fs.append("User logged in\n");
+string log = fs.read();
+if (fs.exists()) {
+    fs.remove();
 }
 ```
 

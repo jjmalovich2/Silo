@@ -1,6 +1,7 @@
 #include "silo.h"
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <cmath>
 #include <stdexcept>
 
@@ -90,6 +91,18 @@ static std::string formatNum(double v) {
             s = s.substr(0, dot);
     }
     return s;
+}
+
+static bool typesCompatible(const std::string& expected, const std::string& actual) {
+    if (expected == actual) return true;
+    if (expected == "unknown" || actual == "unknown") return true;
+    // int -> float/double widening
+    if ((expected == "float" || expected == "double") && actual == "int") return true;
+    // float <-> double equivalence
+    if ((expected == "float" || expected == "double") && (actual == "float" || actual == "double")) return true;
+    // array type compatibility
+    if (expected.find("[]") != std::string::npos && actual.find("[]") != std::string::npos) return true;
+    return false;
 }
 
 // =====================================================================
@@ -242,7 +255,9 @@ static void setInstanceField(const std::string& instName,
 static std::string callMethod(const std::string& instName,
                               const std::string& methodName,
                               const std::vector<std::string>& argVals,
-                              const std::vector<std::string>& argTypes) {
+                              const std::vector<std::string>& argTypes,
+                              const std::vector<std::vector<std::string>>& argArrayElems = {},
+                              const std::vector<std::string>& argOriginalNames = {}) {
     auto iit = SYMBOL_TABLE.find(instName);
     if (iit == SYMBOL_TABLE.end())
         throw std::runtime_error("Unknown instance: " + instName);
@@ -280,17 +295,22 @@ static std::string callMethod(const std::string& instName,
     for (size_t i = 0; i < method.params.size() && i < argVals.size(); i++) {
         const std::string& pname = method.params[i].second;
         const std::string& ptype = method.params[i].first;
-        if (ptype != argTypes[i] && argTypes[i] != "unknown") {
-            bool ok = (ptype == "float" && argTypes[i] == "int");
-            if (!ok) {
-                SYMBOL_TABLE     = prevSymbols;
-                CURRENT_CLASS    = outerClass;
-                CURRENT_INSTANCE = outerInstance;
-                throw std::runtime_error("Type mismatch: param '" + pname +
-                                         "' expects " + ptype + " but got " + argTypes[i]);
-            }
+        if (!typesCompatible(ptype, argTypes[i])) {
+            SYMBOL_TABLE     = prevSymbols;
+            CURRENT_CLASS    = outerClass;
+            CURRENT_INSTANCE = outerInstance;
+            throw std::runtime_error("Type mismatch: param '" + pname +
+                                     "' expects " + ptype + " but got " + argTypes[i]);
         }
-        SYMBOL_TABLE[pname] = {ptype, argVals[i]};
+        if (i < argArrayElems.size() && (!argArrayElems[i].empty() || ptype.find("[]") != std::string::npos)) {
+            RuntimeValue arr;
+            arr.type = ptype;
+            arr.value = "";
+            arr.arrayElements = argArrayElems[i];
+            SYMBOL_TABLE[pname] = arr;
+        } else {
+            SYMBOL_TABLE[pname] = {ptype, argVals[i]};
+        }
     }
 
     std::string result = "0";
@@ -298,6 +318,19 @@ static std::string callMethod(const std::string& instName,
         if (method.body) method.body->execute();
     } catch (const ReturnException& ret) {
         result = ret.value;
+    }
+
+    // Copy back array parameter changes to original variables
+    for (size_t i = 0; i < method.params.size() && i < argOriginalNames.size(); i++) {
+        if (!argOriginalNames[i].empty() && i < argArrayElems.size() && !argArrayElems[i].empty()) {
+            auto pit = SYMBOL_TABLE.find(method.params[i].second);
+            if (pit != SYMBOL_TABLE.end() && pit->second.type.find("[]") != std::string::npos) {
+                auto vit = prevSymbols.find(argOriginalNames[i]);
+                if (vit != prevSymbols.end() && vit->second.type.find("[]") != std::string::npos) {
+                    prevSymbols[argOriginalNames[i]].arrayElements = pit->second.arrayElements;
+                }
+            }
+        }
     }
 
     auto globalUpdates = captureGlobals(className);
@@ -333,7 +366,7 @@ BooleanLiteralNode::BooleanLiteralNode(bool val) : value(val) {}
 VariableNode::VariableNode(const std::string& n) : name(n) {}
 CastOrRefNode::CastOrRefNode(const std::string& op, const std::string& var) : operation(op), targetVar(var) {}
 CastExprNode::CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e) : targetType(t), expr(std::move(e)) {}
-ArrayAccessNode::ArrayAccessNode(const std::string& name, int idx) : arrayName(name), index(idx) {}
+ArrayAccessNode::ArrayAccessNode(const std::string& name, std::unique_ptr<ExprNode> idx) : arrayName(name), indexExpr(std::move(idx)) {}
 FunctionCallNode::FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a,
                                    const std::string& t)
     : funcName(name), args(std::move(a)), templateType(t) {}
@@ -341,11 +374,22 @@ FunctionCallNode::FunctionCallNode(const std::string& name, std::vector<std::uni
 std::string FunctionCallNode::getExprType() const {
     if (funcName == "input")
         return templateType.empty() ? "string" : templateType;
+    if (funcName == "size" || funcName == "length" || funcName == "empty" || funcName == "resize")
+        return "int";
+    if (funcName == "pop" || funcName == "front" || funcName == "back" || funcName == "get" ||
+        funcName == "insert" || funcName == "erase" || funcName == "delete" || funcName == "remove" ||
+        funcName == "push" || funcName == "append")
+        return "string";
+    if (funcName == "readFile" || funcName == "writeFile" || funcName == "appendFile")
+        return "string";
+    if (funcName == "fileExists" || funcName == "deleteFile" || funcName == "renameFile" || funcName == "fileSize")
+        return "int";
     return "unknown";
 }
 
 VarDeclarationNode::VarDeclarationNode(const std::string& t, bool p, bool c, const std::string& id, std::unique_ptr<ExprNode> init) : baseType(t), isPointer(p), isConst(c), identifier(id), initializer(std::move(init)) {}
-ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::string& n, int s) : type(t), name(n), size(s) {}
+ArrayDeclarationNode::ArrayDeclarationNode(const std::string& t, const std::string& n, int s, std::vector<std::unique_ptr<ExprNode>> inits)
+    : type(t), name(n), size(s), initializers(std::move(inits)) {}
 RetypeNode::RetypeNode(const std::string& t, const std::string& v) : newType(t), targetVar(v) {}
 PrintNode::PrintNode(std::unique_ptr<ExprNode> expr) : expression(std::move(expr)) {}
 ReturnNode::ReturnNode(std::unique_ptr<ExprNode> v) : value(std::move(v)) {}
@@ -417,46 +461,14 @@ std::string FStringNode::evaluate() const {
             size_t end   = expr.find_last_not_of(' ');
             if (start != std::string::npos) expr = expr.substr(start, end - start + 1);
 
-            if (expr.size() >= 5 && expr.substr(0, 5) == "self.") {
-                std::string member = expr.substr(5);
-                if (!CURRENT_INSTANCE.empty()) {
-                    size_t parenPos = member.find('(');
-                    if (parenPos != std::string::npos)
-                        result += callMethod(CURRENT_INSTANCE, member.substr(0, parenPos), {}, {});
-                    else
-                        result += getInstanceField(CURRENT_INSTANCE, member, CURRENT_CLASS);
-                }
-            } else if (expr.find('.') != std::string::npos) {
-                size_t dot = expr.find('.');
-                std::string inst   = expr.substr(0, dot);
-                std::string member = expr.substr(dot + 1);
-                auto it = SYMBOL_TABLE.find(inst);
-                if (it != SYMBOL_TABLE.end())
-                    result += getInstanceField(inst, member, CURRENT_CLASS);
-            } else {
-                auto it = SYMBOL_TABLE.find(expr);
-                if (it != SYMBOL_TABLE.end()) {
-                    result += it->second.value;
-                } else if (!CURRENT_INSTANCE.empty()) {
-                    auto iit = SYMBOL_TABLE.find(CURRENT_INSTANCE);
-                    if (iit != SYMBOL_TABLE.end()) {
-                        auto fit = iit->second.fields.find(expr);
-                        if (fit != iit->second.fields.end()) {
-                            result += fit->second.value;
-                        } else {
-                            std::string cls = iit->second.instanceOf;
-                            auto cit = SYMBOL_TABLE.find(cls);
-                            if (cit != SYMBOL_TABLE.end()) {
-                                auto gfit = cit->second.fields.find(expr);
-                                if (gfit != cit->second.fields.end())
-                                    result += gfit->second.value;
-                                else result += expr;
-                            } else result += expr;
-                        }
-                    } else result += expr;
-                } else {
-                    result += expr;
-                }
+            try {
+                Lexer miniLexer(expr);
+                auto tokens = miniLexer.tokenize();
+                Parser miniParser(tokens);
+                auto ast = miniParser.parseLogicalOr();
+                result += ast->evaluate();
+            } catch (const std::exception&) {
+                result += expr;
             }
         }
     }
@@ -502,6 +514,25 @@ std::string AssignExprNode::evaluate() const {
     auto it = SYMBOL_TABLE.find(varName);
     if (it != SYMBOL_TABLE.end() && it->second.isConst)
         throw std::runtime_error("Cannot reassign const variable: " + varName);
+
+    // Array literal assignment: arr = [1, 2, 3];
+    ArrayLiteralNode* aln = dynamic_cast<ArrayLiteralNode*>(value.get());
+    if (aln != nullptr) {
+        RuntimeValue* arr = nullptr;
+        if (it != SYMBOL_TABLE.end() && it->second.type.find("[]") != std::string::npos) {
+            arr = &it->second;
+        } else if (it == SYMBOL_TABLE.end()) {
+            SYMBOL_TABLE[varName] = {"auto[]", ""};
+            arr = &SYMBOL_TABLE[varName];
+        }
+        if (arr != nullptr) {
+            arr->arrayElements.clear();
+            for (auto& elem : aln->getElements()) {
+                arr->arrayElements.push_back(elem->evaluate());
+            }
+            return varName;
+        }
+    }
 
     std::string result = value->evaluate();
 
@@ -600,10 +631,67 @@ std::string CastExprNode::evaluate() const {
 
 std::string ArrayAccessNode::evaluate() const {
     auto it = SYMBOL_TABLE.find(arrayName);
-    if (it == SYMBOL_TABLE.end()) return "ERR";
-    if (index >= 0 && index < (int)it->second.arrayElements.size())
-        return it->second.arrayElements[index];
-    return "ERR";
+    if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined array: " + arrayName);
+    if (it->second.type.find("[]") == std::string::npos) throw std::runtime_error("Not an array: " + arrayName);
+    std::string idxStr = indexExpr->evaluate();
+    int idx = 0;
+    try { idx = std::stoi(idxStr); } catch (...) { throw std::runtime_error("Invalid array index: " + idxStr); }
+    if (idx >= 0 && idx < (int)it->second.arrayElements.size())
+        return it->second.arrayElements[idx];
+    throw std::runtime_error("Array index out of bounds: " + std::to_string(idx));
+}
+
+ArrayAssignNode::ArrayAssignNode(const std::string& name, std::unique_ptr<ExprNode> idx, std::unique_ptr<ExprNode> val)
+    : arrayName(name), indexExpr(std::move(idx)), valueExpr(std::move(val)) {}
+
+std::string ArrayAssignNode::evaluate() const {
+    auto it = SYMBOL_TABLE.find(arrayName);
+    if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined array: " + arrayName);
+    if (it->second.type.find("[]") == std::string::npos) throw std::runtime_error("Not an array: " + arrayName);
+    std::string idxStr = indexExpr->evaluate();
+    int idx = 0;
+    try { idx = std::stoi(idxStr); } catch (...) { throw std::runtime_error("Invalid array index: " + idxStr); }
+    std::string val = valueExpr->evaluate();
+    if (idx >= 0 && idx < (int)it->second.arrayElements.size()) {
+        it->second.arrayElements[idx] = val;
+        return val;
+    }
+    throw std::runtime_error("Array index out of bounds: " + std::to_string(idx));
+}
+
+ArrayCompoundAssignNode::ArrayCompoundAssignNode(const std::string& name, std::unique_ptr<ExprNode> idx, std::string op, std::unique_ptr<ExprNode> val)
+    : arrayName(name), indexExpr(std::move(idx)), op(std::move(op)), valueExpr(std::move(val)) {}
+
+std::string ArrayCompoundAssignNode::evaluate() const {
+    auto it = SYMBOL_TABLE.find(arrayName);
+    if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined array: " + arrayName);
+    if (it->second.type.find("[]") == std::string::npos) throw std::runtime_error("Not an array: " + arrayName);
+    std::string idxStr = indexExpr->evaluate();
+    int idx = 0;
+    try { idx = std::stoi(idxStr); } catch (...) { throw std::runtime_error("Invalid array index: " + idxStr); }
+    if (idx < 0 || idx >= (int)it->second.arrayElements.size())
+        throw std::runtime_error("Array index out of bounds: " + std::to_string(idx));
+    std::string current = it->second.arrayElements[idx];
+    std::string val = valueExpr->evaluate();
+    std::string result;
+    if ((!isNumeric(current) || !isNumeric(val)) && op == "+") {
+        result = current + val;
+    } else if (!isNumeric(current) || !isNumeric(val)) {
+        throw std::runtime_error("Cannot apply " + op + " to non-numeric array elements");
+    } else {
+        double l = std::stod(current), r = std::stod(val);
+        if (op == "+") result = formatNum(l + r);
+        else if (op == "-") result = formatNum(l - r);
+        else if (op == "*") result = formatNum(l * r);
+        else if (op == "/") {
+            if (r == 0) { std::cerr << "Runtime Error: Division by Zero\n"; result = "0"; }
+            else result = formatNum(l / r);
+        }
+        else if (op == "%") result = formatNum(std::fmod(l, r));
+        else throw std::runtime_error("Unknown compound operator: " + op);
+    }
+    it->second.arrayElements[idx] = result;
+    return result;
 }
 
 std::string FunctionCallNode::evaluate() const {
@@ -647,15 +735,173 @@ std::string FunctionCallNode::evaluate() const {
         return line;
     }
 
+    // ── builtin array functions (functional style) ────────────────────
+    auto getArrayVarName = [&](size_t argIdx) -> std::string {
+        if (argIdx >= args.size()) throw std::runtime_error("Array function missing argument " + std::to_string(argIdx));
+        VariableNode* vn = dynamic_cast<VariableNode*>(args[argIdx].get());
+        if (!vn) throw std::runtime_error("Array function argument " + std::to_string(argIdx) + " must be an array variable");
+        return vn->getName();
+    };
+    auto requireArray = [&](const std::string& name) -> RuntimeValue& {
+        auto it = SYMBOL_TABLE.find(name);
+        if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined array: " + name);
+        if (it->second.type.find("[]") == std::string::npos) throw std::runtime_error("Not an array: " + name);
+        return it->second;
+    };
+
+    if (funcName == "push" || funcName == "append") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        std::string val = args.size() > 1 ? args[1]->evaluate() : "0";
+        arr.arrayElements.push_back(val);
+        return val;
+    }
+    if (funcName == "pop") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        if (arr.arrayElements.empty()) throw std::runtime_error("pop from empty array");
+        std::string val = arr.arrayElements.back();
+        arr.arrayElements.pop_back();
+        return val;
+    }
+    if (funcName == "insert") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        if (args.size() < 2) throw std::runtime_error("insert requires (array, index, value)");
+        int idx = std::stoi(args[1]->evaluate());
+        std::string val = args.size() > 2 ? args[2]->evaluate() : "0";
+        if (idx < 0) idx = 0;
+        if (idx > (int)arr.arrayElements.size()) idx = arr.arrayElements.size();
+        arr.arrayElements.insert(arr.arrayElements.begin() + idx, val);
+        return val;
+    }
+    if (funcName == "erase" || funcName == "delete" || funcName == "remove") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        if (args.size() < 2) throw std::runtime_error("erase/delete/remove requires (array, index)");
+        int idx = std::stoi(args[1]->evaluate());
+        if (idx < 0 || idx >= (int)arr.arrayElements.size()) throw std::runtime_error("erase index out of bounds");
+        std::string val = arr.arrayElements[idx];
+        arr.arrayElements.erase(arr.arrayElements.begin() + idx);
+        return val;
+    }
+    if (funcName == "size" || funcName == "length") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        return std::to_string(arr.arrayElements.size());
+    }
+    if (funcName == "clear") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        arr.arrayElements.clear();
+        return "0";
+    }
+    if (funcName == "resize") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        if (args.size() < 2) throw std::runtime_error("resize requires (array, newSize)");
+        int newSize = std::stoi(args[1]->evaluate());
+        if (newSize < 0) newSize = 0;
+        arr.arrayElements.resize(newSize, "0");
+        return std::to_string(newSize);
+    }
+    if (funcName == "front") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        if (arr.arrayElements.empty()) throw std::runtime_error("front from empty array");
+        return arr.arrayElements.front();
+    }
+    if (funcName == "back") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        if (arr.arrayElements.empty()) throw std::runtime_error("back from empty array");
+        return arr.arrayElements.back();
+    }
+    if (funcName == "empty") {
+        std::string arrName = getArrayVarName(0);
+        RuntimeValue& arr = requireArray(arrName);
+        return arr.arrayElements.empty() ? "1" : "0";
+    }
+
+    // ── builtin file I/O functions ────────────────────────────────────
+    if (funcName == "readFile") {
+        if (args.empty()) throw std::runtime_error("readFile requires a filename");
+        std::string filename = args[0]->evaluate();
+        std::ifstream file(filename);
+        if (!file) throw std::runtime_error("Cannot open file for reading: " + filename);
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        return content;
+    }
+    if (funcName == "writeFile") {
+        if (args.size() < 2) throw std::runtime_error("writeFile requires (filename, content)");
+        std::string filename = args[0]->evaluate();
+        std::string content = args[1]->evaluate();
+        std::ofstream file(filename);
+        if (!file) throw std::runtime_error("Cannot open file for writing: " + filename);
+        file << content;
+        return content;
+    }
+    if (funcName == "appendFile") {
+        if (args.size() < 2) throw std::runtime_error("appendFile requires (filename, content)");
+        std::string filename = args[0]->evaluate();
+        std::string content = args[1]->evaluate();
+        std::ofstream file(filename, std::ios::app);
+        if (!file) throw std::runtime_error("Cannot open file for appending: " + filename);
+        file << content;
+        return content;
+    }
+    if (funcName == "fileExists") {
+        if (args.empty()) return "0";
+        std::string filename = args[0]->evaluate();
+        std::ifstream file(filename);
+        return file.good() ? "1" : "0";
+    }
+    if (funcName == "deleteFile") {
+        if (args.empty()) return "0";
+        std::string filename = args[0]->evaluate();
+        return (std::remove(filename.c_str()) == 0) ? "1" : "0";
+    }
+    if (funcName == "renameFile") {
+        if (args.size() < 2) throw std::runtime_error("renameFile requires (oldPath, newPath)");
+        std::string oldName = args[0]->evaluate();
+        std::string newName = args[1]->evaluate();
+        return (std::rename(oldName.c_str(), newName.c_str()) == 0) ? "1" : "0";
+    }
+    if (funcName == "fileSize") {
+        if (args.empty()) return "0";
+        std::string filename = args[0]->evaluate();
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file) return "0";
+        return std::to_string(file.tellg());
+    }
+
     auto it = SYMBOL_TABLE.find(funcName);
     if (it == SYMBOL_TABLE.end())
         throw std::runtime_error("Undefined function: '" + funcName + "'");
 
     std::vector<std::string> argValues, argTypes;
+    std::vector<std::vector<std::string>> argArrayElems;
     for (auto& arg : args) {
         std::string val = arg->evaluate();
         argValues.push_back(val);
         argTypes.push_back(inferType(val));
+        std::vector<std::string> elems;
+        VariableNode* vn = dynamic_cast<VariableNode*>(arg.get());
+        if (vn) {
+            auto vit = SYMBOL_TABLE.find(vn->getName());
+            if (vit != SYMBOL_TABLE.end() && vit->second.type.find("[]") != std::string::npos) {
+                elems = vit->second.arrayElements;
+                argTypes.back() = vit->second.type;
+            }
+        }
+        ArrayLiteralNode* aln = dynamic_cast<ArrayLiteralNode*>(arg.get());
+        if (aln) {
+            for (auto& elem : aln->getElements()) {
+                elems.push_back(elem->evaluate());
+            }
+            argTypes.back() = "auto[]";
+        }
+        argArrayElems.push_back(elems);
     }
 
     RuntimeValue func = it->second;
@@ -664,19 +910,40 @@ std::string FunctionCallNode::evaluate() const {
     for (size_t i = 0; i < func.params.size() && i < argValues.size(); i++) {
         const std::string& ptype = func.params[i].first;
         const std::string& pname = func.params[i].second;
-        if (ptype != argTypes[i] && argTypes[i] != "unknown") {
-            bool ok = (ptype == "float" && argTypes[i] == "int");
-            if (!ok)
-                throw std::runtime_error("Type mismatch: param '" + pname +
-                                         "' expects " + ptype + " but got " + argTypes[i]);
+        if (!typesCompatible(ptype, argTypes[i])) {
+            throw std::runtime_error("Type mismatch: param '" + pname +
+                                     "' expects " + ptype + " but got " + argTypes[i]);
         }
-        SYMBOL_TABLE[pname] = {ptype, argValues[i]};
+        if (!argArrayElems[i].empty() || ptype.find("[]") != std::string::npos) {
+            RuntimeValue arr;
+            arr.type = ptype;
+            arr.value = "";
+            arr.arrayElements = argArrayElems[i];
+            SYMBOL_TABLE[pname] = arr;
+        } else {
+            SYMBOL_TABLE[pname] = {ptype, argValues[i]};
+        }
     }
 
     std::string result = "0";
     try {
         if (func.body) func.body->execute();
     } catch (const ReturnException& ret) { result = ret.value; }
+
+    // Copy back array parameter changes to original variables
+    for (size_t i = 0; i < func.params.size() && i < args.size(); i++) {
+        VariableNode* vn = dynamic_cast<VariableNode*>(args[i].get());
+        if (vn && (!argArrayElems[i].empty() || func.params[i].first.find("[]") != std::string::npos)) {
+            auto pit = SYMBOL_TABLE.find(func.params[i].second);
+            if (pit != SYMBOL_TABLE.end() && pit->second.type.find("[]") != std::string::npos) {
+                auto vit = prevScope.find(vn->getName());
+                if (vit != prevScope.end() && vit->second.type.find("[]") != std::string::npos) {
+                    prevScope[vn->getName()].arrayElements = pit->second.arrayElements;
+                }
+            }
+        }
+    }
+
     SYMBOL_TABLE = prevScope;
     return result;
 }
@@ -723,12 +990,32 @@ std::string SelfAccessNode::evaluate() const {
         throw std::runtime_error("'self' used outside of a class method");
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
+        std::vector<std::vector<std::string>> argArrayElems;
+        std::vector<std::string> argOriginalNames;
         for (auto& a : callArgs) {
             std::string val = a->evaluate();
             argVals.push_back(val);
             argTypes.push_back(inferType(val));
+            std::vector<std::string> elems;
+            VariableNode* vn = dynamic_cast<VariableNode*>(a.get());
+            if (vn) {
+                auto vit = SYMBOL_TABLE.find(vn->getName());
+                if (vit != SYMBOL_TABLE.end() && vit->second.type.find("[]") != std::string::npos) {
+                    elems = vit->second.arrayElements;
+                    argTypes.back() = vit->second.type;
+                }
+            }
+            ArrayLiteralNode* aln = dynamic_cast<ArrayLiteralNode*>(a.get());
+            if (aln) {
+                for (auto& elem : aln->getElements()) {
+                    elems.push_back(elem->evaluate());
+                }
+                argTypes.back() = "auto[]";
+            }
+            argArrayElems.push_back(elems);
+            argOriginalNames.push_back(vn ? vn->getName() : "");
         }
-        return callMethod(CURRENT_INSTANCE, memberName, argVals, argTypes);
+        return callMethod(CURRENT_INSTANCE, memberName, argVals, argTypes, argArrayElems, argOriginalNames);
     }
     return getInstanceField(CURRENT_INSTANCE, memberName, CURRENT_CLASS);
 }
@@ -752,14 +1039,112 @@ std::string MemberAccessNode::evaluate() const {
         throw std::runtime_error("Field '" + memberName + "' not found on class " + instanceName);
     }
 
+    // ── array "methods" ───────────────────────────────────────────────
+    if (inst.type.find("[]") != std::string::npos) {
+        if (!isCall) {
+            throw std::runtime_error("Array does not have field: " + memberName);
+        }
+        std::vector<std::string> argVals;
+        for (auto& a : callArgs) {
+            argVals.push_back(a->evaluate());
+        }
+        auto& arr = inst.arrayElements;
+        if (memberName == "push" || memberName == "append") {
+            if (argVals.size() < 1) throw std::runtime_error("push/append requires 1 argument");
+            arr.push_back(argVals[0]);
+            return argVals[0];
+        }
+        if (memberName == "pop") {
+            if (arr.empty()) throw std::runtime_error("pop from empty array");
+            std::string val = arr.back();
+            arr.pop_back();
+            return val;
+        }
+        if (memberName == "insert") {
+            if (argVals.size() < 2) throw std::runtime_error("insert requires 2 arguments (index, value)");
+            int idx = std::stoi(argVals[0]);
+            if (idx < 0) idx = 0;
+            if (idx > (int)arr.size()) idx = arr.size();
+            arr.insert(arr.begin() + idx, argVals[1]);
+            return argVals[1];
+        }
+        if (memberName == "erase" || memberName == "delete" || memberName == "remove") {
+            if (argVals.size() < 1) throw std::runtime_error("erase/delete/remove requires 1 argument (index)");
+            int idx = std::stoi(argVals[0]);
+            if (idx < 0 || idx >= (int)arr.size()) throw std::runtime_error("erase index out of bounds");
+            std::string val = arr[idx];
+            arr.erase(arr.begin() + idx);
+            return val;
+        }
+        if (memberName == "size" || memberName == "length") {
+            return std::to_string(arr.size());
+        }
+        if (memberName == "clear") {
+            arr.clear();
+            return "0";
+        }
+        if (memberName == "resize") {
+            if (argVals.size() < 1) throw std::runtime_error("resize requires 1 argument (new size)");
+            int newSize = std::stoi(argVals[0]);
+            if (newSize < 0) newSize = 0;
+            arr.resize(newSize, "0");
+            return std::to_string(newSize);
+        }
+        if (memberName == "front") {
+            if (arr.empty()) throw std::runtime_error("front from empty array");
+            return arr.front();
+        }
+        if (memberName == "back") {
+            if (arr.empty()) throw std::runtime_error("back from empty array");
+            return arr.back();
+        }
+        if (memberName == "empty") {
+            return arr.empty() ? "1" : "0";
+        }
+        if (memberName == "get") {
+            if (argVals.size() < 1) throw std::runtime_error("get requires 1 argument (index)");
+            int idx = std::stoi(argVals[0]);
+            if (idx < 0 || idx >= (int)arr.size()) throw std::runtime_error("get index out of bounds");
+            return arr[idx];
+        }
+        if (memberName == "set") {
+            if (argVals.size() < 2) throw std::runtime_error("set requires 2 arguments (index, value)");
+            int idx = std::stoi(argVals[0]);
+            if (idx < 0 || idx >= (int)arr.size()) throw std::runtime_error("set index out of bounds");
+            arr[idx] = argVals[1];
+            return argVals[1];
+        }
+        throw std::runtime_error("Unknown array method: " + memberName);
+    }
+
     if (isCall) {
         std::vector<std::string> argVals, argTypes;
+        std::vector<std::vector<std::string>> argArrayElems;
+        std::vector<std::string> argOriginalNames;
         for (auto& a : callArgs) {
             std::string val = a->evaluate();
             argVals.push_back(val);
             argTypes.push_back(inferType(val));
+            std::vector<std::string> elems;
+            VariableNode* vn = dynamic_cast<VariableNode*>(a.get());
+            if (vn) {
+                auto vit = SYMBOL_TABLE.find(vn->getName());
+                if (vit != SYMBOL_TABLE.end() && vit->second.type.find("[]") != std::string::npos) {
+                    elems = vit->second.arrayElements;
+                    argTypes.back() = vit->second.type;
+                }
+            }
+            ArrayLiteralNode* aln = dynamic_cast<ArrayLiteralNode*>(a.get());
+            if (aln) {
+                for (auto& elem : aln->getElements()) {
+                    elems.push_back(elem->evaluate());
+                }
+                argTypes.back() = "auto[]";
+            }
+            argArrayElems.push_back(elems);
+            argOriginalNames.push_back(vn ? vn->getName() : "");
         }
-        return callMethod(instanceName, memberName, argVals, argTypes);
+        return callMethod(instanceName, memberName, argVals, argTypes, argArrayElems, argOriginalNames);
     }
 
     std::string className = inst.instanceOf;
@@ -770,6 +1155,16 @@ std::string MemberAccessNode::evaluate() const {
             return fit->second.value;
     }
     return getInstanceField(instanceName, memberName, CURRENT_CLASS);
+}
+
+std::string MemberAccessNode::getExprType() const {
+    if (memberName == "size" || memberName == "length" || memberName == "empty" || memberName == "resize")
+        return "int";
+    if (memberName == "pop" || memberName == "front" || memberName == "back" || memberName == "get" ||
+        memberName == "insert" || memberName == "erase" || memberName == "delete" || memberName == "remove" ||
+        memberName == "push" || memberName == "append")
+        return "string";
+    return "unknown";
 }
 
 // =====================================================================
@@ -790,9 +1185,7 @@ void VarDeclarationNode::execute() {
             initType = inferType(val);
         // allow unknown (e.g., when value can't be inferred) to pass
         if (initType != "unknown") {
-            // allow int -> float widening
-            bool ok = (baseType == "float" && initType == "int");
-            if (!ok && baseType != initType) {
+            if (!typesCompatible(baseType, initType)) {
                 throw std::runtime_error("Type mismatch: variable '" + identifier + "' expects "
                                          + baseType + " but got " + initType);
             }
@@ -813,8 +1206,41 @@ void RetypeNode::execute() {
 
 void ArrayDeclarationNode::execute() {
     RuntimeValue v; v.type = type + "[]";
-    for (int i = 0; i < size; i++) v.arrayElements.push_back("0");
+    int actualSize = size;
+    if (actualSize == 0 && !initializers.empty()) {
+        actualSize = (int)initializers.size();
+    }
+    for (int i = 0; i < actualSize; i++) v.arrayElements.push_back("0");
+    for (size_t i = 0; i < initializers.size() && i < v.arrayElements.size(); i++) {
+        v.arrayElements[i] = initializers[i]->evaluate();
+    }
     SYMBOL_TABLE[name] = v;
+}
+
+ArrayLiteralNode::ArrayLiteralNode(std::vector<std::unique_ptr<ExprNode>> elems) : elements(std::move(elems)) {}
+
+std::string ArrayLiteralNode::evaluate() const {
+    std::string result = "[";
+    for (size_t i = 0; i < elements.size(); i++) {
+        if (i > 0) result += ", ";
+        result += elements[i]->evaluate();
+    }
+    result += "]";
+    return result;
+}
+
+ArrayReassignNode::ArrayReassignNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> elems)
+    : arrayName(name), elements(std::move(elems)) {}
+
+std::string ArrayReassignNode::evaluate() const {
+    auto it = SYMBOL_TABLE.find(arrayName);
+    if (it == SYMBOL_TABLE.end()) throw std::runtime_error("Undefined array: " + arrayName);
+    if (it->second.type.find("[]") == std::string::npos) throw std::runtime_error("Not an array: " + arrayName);
+    it->second.arrayElements.clear();
+    for (auto& elem : elements) {
+        it->second.arrayElements.push_back(elem->evaluate());
+    }
+    return arrayName;
 }
 
 void FunctionDefNode::execute() {
@@ -1062,7 +1488,14 @@ std::string Parser::parseTypeName() {
     if (t.type == TokenType::TypeInt    || t.type == TokenType::TypeString ||
         t.type == TokenType::TypeFloat  || t.type == TokenType::TypeBool   ||
         t.type == TokenType::Void       || t.type == TokenType::Identifier) {
-        advance(); return t.value;
+        advance();
+        std::string type = t.value;
+        if (peek().type == TokenType::LeftBracket) {
+            advance();
+            consume(TokenType::RightBracket, "]");
+            type += "[]";
+        }
+        return type;
     }
     throw std::runtime_error("Expected type name, got: " + t.value);
 }
@@ -1208,9 +1641,9 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
 
         if (peek().type == TokenType::LeftBracket) {
             advance();
-            int idx = std::stoi(consume(TokenType::Number, "Array index").value);
+            auto idx = parseLogicalOr();
             consume(TokenType::RightBracket, "]");
-            return std::make_unique<ArrayAccessNode>(name, idx);
+            return std::make_unique<ArrayAccessNode>(name, std::move(idx));
         }
 
         return std::make_unique<VariableNode>(name);
@@ -1221,6 +1654,20 @@ std::unique_ptr<ExprNode> Parser::parsePrimary() {
         auto expr = parseLogicalOr();
         consume(TokenType::RightParen, ")");
         return expr;
+    }
+
+    // Array literal: [expr, expr, ...]
+    if (t.type == TokenType::LeftBracket) {
+        advance();
+        std::vector<std::unique_ptr<ExprNode>> elems;
+        if (peek().type != TokenType::RightBracket) {
+            do {
+                if (peek().type == TokenType::Comma) advance();
+                elems.push_back(parseLogicalOr());
+            } while (peek().type == TokenType::Comma);
+        }
+        consume(TokenType::RightBracket, "]");
+        return std::make_unique<ArrayLiteralNode>(std::move(elems));
     }
 
     return std::make_unique<NumberLiteralNode>("0");
@@ -1363,6 +1810,11 @@ std::unique_ptr<ASTNode> Parser::parseClassDef() {
                     if (peek().type == TokenType::Comma) advance();
                     std::string ptype = parseTypeName();
                     std::string pname = consume(TokenType::Identifier, "param name").value;
+                    if (peek().type == TokenType::LeftBracket) {
+                        advance();
+                        consume(TokenType::RightBracket, "]");
+                        ptype += "[]";
+                    }
                     params.push_back({ptype, pname});
                 } while (peek().type == TokenType::Comma);
             }
@@ -1421,6 +1873,11 @@ std::unique_ptr<ASTNode> Parser::parseClassDef() {
                     if (peek().type == TokenType::Comma) advance();
                     std::string ptype = parseTypeName();
                     std::string pname = consume(TokenType::Identifier, "param name").value;
+                    if (peek().type == TokenType::LeftBracket) {
+                        advance();
+                        consume(TokenType::RightBracket, "]");
+                        ptype += "[]";
+                    }
                     params.push_back({ptype, pname});
                 } while (peek().type == TokenType::Comma);
             }
@@ -1585,7 +2042,13 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
                 do {
                     if (peek().type == TokenType::Comma) advance();
                     std::string pt = parseTypeName();
-                    p.push_back({pt, consume(TokenType::Identifier, "Param").value});
+                    std::string pname = consume(TokenType::Identifier, "Param").value;
+                    if (peek().type == TokenType::LeftBracket) {
+                        advance();
+                        consume(TokenType::RightBracket, "]");
+                        pt += "[]";
+                    }
+                    p.push_back({pt, pname});
                 } while (peek().type == TokenType::Comma);
             }
             consume(TokenType::RightParen, ")");
@@ -1596,10 +2059,25 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
         }
         if (peek().type == TokenType::LeftBracket) {
             advance();
-            int sz = std::stoi(consume(TokenType::Number, "Sz").value);
+            int sz = 0;
+            if (peek().type == TokenType::Number) {
+                sz = std::stoi(advance().value);
+            }
             consume(TokenType::RightBracket, "]");
+            std::vector<std::unique_ptr<ExprNode>> inits;
+            if (peek().type == TokenType::Equals) {
+                advance();
+                consume(TokenType::LeftBracket, "[");
+                if (peek().type != TokenType::RightBracket) {
+                    do {
+                        if (peek().type == TokenType::Comma) advance();
+                        inits.push_back(parseLogicalOr());
+                    } while (peek().type == TokenType::Comma);
+                }
+                consume(TokenType::RightBracket, "]");
+            }
             consume(TokenType::Semicolon, ";");
-            return std::make_unique<ArrayDeclarationNode>(type, name, sz);
+            return std::make_unique<ArrayDeclarationNode>(type, name, sz, std::move(inits));
         }
         consume(TokenType::Equals, "=");
         auto init = parseLogicalOr();
@@ -1648,6 +2126,35 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
             consume(TokenType::Semicolon, ";");
             return std::make_unique<ExpressionStatement>(
                 std::make_unique<MemberAssignNode>(instName, fieldName, std::move(val))
+            );
+        }
+
+        // ── arr[expr] = expr;  or  arr[expr] += expr; ─────────────────
+        if (position + 1 < tokens.size() &&
+            tokens[position + 1].type == TokenType::LeftBracket) {
+            std::string arrName = advance().value;
+            advance(); // [
+            auto idxExpr = parseLogicalOr();
+            consume(TokenType::RightBracket, "]");
+            if (peek().type == TokenType::Equals) {
+                advance();
+                auto valExpr = parseLogicalOr();
+                consume(TokenType::Semicolon, ";");
+                return std::make_unique<ExpressionStatement>(
+                    std::make_unique<ArrayAssignNode>(arrName, std::move(idxExpr), std::move(valExpr))
+                );
+            }
+            if (isCompound(peek().type)) {
+                std::string op = compoundOp(advance().type);
+                auto valExpr = parseLogicalOr();
+                consume(TokenType::Semicolon, ";");
+                return std::make_unique<ExpressionStatement>(
+                    std::make_unique<ArrayCompoundAssignNode>(arrName, std::move(idxExpr), op, std::move(valExpr))
+                );
+            }
+            consume(TokenType::Semicolon, ";");
+            return std::make_unique<ExpressionStatement>(
+                std::make_unique<ArrayAccessNode>(arrName, std::move(idxExpr))
             );
         }
 

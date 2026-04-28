@@ -212,9 +212,28 @@ public:
 
 class ArrayAccessNode : public ExprNode {
     std::string arrayName;
-    int index;
+    std::unique_ptr<ExprNode> indexExpr;
 public:
-    ArrayAccessNode(const std::string& name, int idx);
+    ArrayAccessNode(const std::string& name, std::unique_ptr<ExprNode> idx);
+    std::string evaluate() const override;
+};
+
+class ArrayAssignNode : public ExprNode {
+    std::string arrayName;
+    std::unique_ptr<ExprNode> indexExpr;
+    std::unique_ptr<ExprNode> valueExpr;
+public:
+    ArrayAssignNode(const std::string& name, std::unique_ptr<ExprNode> idx, std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
+class ArrayCompoundAssignNode : public ExprNode {
+    std::string arrayName;
+    std::unique_ptr<ExprNode> indexExpr;
+    std::string op;
+    std::unique_ptr<ExprNode> valueExpr;
+public:
+    ArrayCompoundAssignNode(const std::string& name, std::unique_ptr<ExprNode> idx, std::string op, std::unique_ptr<ExprNode> val);
     std::string evaluate() const override;
 };
 
@@ -248,6 +267,7 @@ public:
     MemberAccessNode(const std::string& inst, const std::string& member,
                      bool isCall, std::vector<std::unique_ptr<ExprNode>> args = {});
     std::string evaluate() const override;
+    std::string getExprType() const override;
 };
 
 class MemberAssignNode : public ExprNode {
@@ -286,9 +306,27 @@ class ArrayDeclarationNode : public ASTNode {
     std::string type;
     std::string name;
     int size;
+    std::vector<std::unique_ptr<ExprNode>> initializers;
 public:
-    ArrayDeclarationNode(const std::string& t, const std::string& n, int s);
+    ArrayDeclarationNode(const std::string& t, const std::string& n, int s,
+                         std::vector<std::unique_ptr<ExprNode>> inits = {});
     void execute() override;
+};
+
+class ArrayLiteralNode : public ExprNode {
+    std::vector<std::unique_ptr<ExprNode>> elements;
+public:
+    ArrayLiteralNode(std::vector<std::unique_ptr<ExprNode>> elems);
+    std::string evaluate() const override;
+    const std::vector<std::unique_ptr<ExprNode>>& getElements() const { return elements; }
+};
+
+class ArrayReassignNode : public ExprNode {
+    std::string arrayName;
+    std::vector<std::unique_ptr<ExprNode>> elements;
+public:
+    ArrayReassignNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> elems);
+    std::string evaluate() const override;
 };
 
 class RetypeNode : public ASTNode {

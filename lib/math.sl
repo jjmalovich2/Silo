@@ -157,3 +157,13 @@ int lcm(int a, int b) {
 double lerp(double a, double b, double t) {
     return a + t * (b - a);
 }
+
+double avg_int(int[] arr) {
+    int result = 0;
+
+    for (int i = 0; i < arr.size(); i++) {
+        result = result + arr[i];
+    }
+    result = result / arr.size();
+    return result;
+}
