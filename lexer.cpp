@@ -5,10 +5,12 @@
 Lexer::Lexer(const std::string& source) : src(source), pos(0) {}
 
 char Lexer::peek() {
+    // look at current char without moving
     return (pos < src.size()) ? src[pos] : '\0';
 }
 
 void Lexer::skipWhitespace() {
+    // ignore spaces, tabs, and // comments
     while (pos < src.size()) {
         if (std::isspace((unsigned char)src[pos])) {
             pos++;
@@ -21,12 +23,13 @@ void Lexer::skipWhitespace() {
 }
 
 Token Lexer::nextToken() {
+    // figure out what the next token is
     skipWhitespace();
     if (pos >= src.size()) return {TokenType::EndOfFile, ""};
 
     char c = src[pos];
 
-    // f-string: f"..."
+    // handle f-strings
     if (c == 'f' && pos + 1 < src.size() && src[pos + 1] == '"') {
         pos += 2;
         std::string val;
@@ -49,7 +52,7 @@ Token Lexer::nextToken() {
         return {TokenType::FStringLiteral, val};
     }
 
-    // string literal: "..."
+    // regular double-quoted string
     if (c == '"') {
         pos++;
         std::string val;
@@ -72,7 +75,7 @@ Token Lexer::nextToken() {
         return {TokenType::StringLiteral, val};
     }
 
-    // number literal
+    // integers or floats
     if (std::isdigit((unsigned char)c)) {
         std::string val;
         bool hasDot = false;
@@ -84,14 +87,16 @@ Token Lexer::nextToken() {
         return {TokenType::Number, val};
     }
 
-    // identifier or keyword
+    // check if it matches a reserved word
     if (std::isalpha((unsigned char)c) || c == '_') {
         std::string val;
         while (pos < src.size() &&
                (std::isalnum((unsigned char)src[pos]) || src[pos] == '_')) {
             val += src[pos++];
         }
-        if (val == "int")         return {TokenType::TypeInt,    val};
+        // turn the value into a token, probably a better way to do 
+        // this but this works and im not gonna change it
+        if (val == "int")         return {TokenType::TypeInt,     val};
         if (val == "string")      return {TokenType::TypeString,  val};
         if (val == "float")       return {TokenType::TypeFloat,   val};
         if (val == "double")      return {TokenType::TypeFloat,   val};
@@ -123,6 +128,7 @@ Token Lexer::nextToken() {
 
     pos++;
 
+    // single-char tokens and multi-char operators
     switch (c) {
         case '+':
             if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::PlusEquals,  "+="}; }
@@ -176,6 +182,7 @@ Token Lexer::nextToken() {
 }
 
 std::vector<Token> Lexer::tokenize() {
+    // keep grabbing tokens until EOF
     std::vector<Token> tokens;
     while (true) {
         Token t = nextToken();

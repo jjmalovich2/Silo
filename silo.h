@@ -8,8 +8,8 @@
 #include <memory>
 #include <iostream>
 #include <functional>
+// Token types the lexer spits out
 
-// ── Token Types ──────────────────────────────────────────────────────
 enum TokenType {
     // Keywords
     TypeInt, TypeString, TypeFloat, TypeBool,
@@ -74,8 +74,8 @@ struct ASTNode;
 struct ExprNode;
 class BlockNode;
 
-// ── Field definition ─────────────────────────────────────────────────
 struct FieldDef {
+    // field access level, type, default value, const flag
     std::string access;   // "private", "protected", "global", "public"
     std::string type;
     std::string value;
@@ -83,8 +83,8 @@ struct FieldDef {
     std::shared_ptr<ExprNode> initExpr; // stored for deferred evaluation at instantiation
 };
 
-// ── Method definition ─────────────────────────────────────────────────
 struct MethodDef {
+    // return type, params, body, ctor bindings, parent ctor info
     std::string returnType;
     std::vector<std::pair<std::string, std::string>> params;
     std::shared_ptr<BlockNode> body;
@@ -94,8 +94,8 @@ struct MethodDef {
     std::string ownerClass;
 };
 
-// ── Runtime Value ─────────────────────────────────────────────────────
 struct RuntimeValue {
+    // can be a variable, function, class instance, or array
     std::string type;
     std::string value;
     bool isConst = false;
@@ -117,21 +117,20 @@ extern std::string CURRENT_INSTANCE;
 void printSymbolTable();
 void clear();
 
-// ── AST Node Base Classes ─────────────────────────────────────────────
 struct ASTNode {
+    // base class for all statements
     virtual ~ASTNode() = default;
     virtual void execute() = 0;
 };
 
 struct ExprNode : public ASTNode {
+    // base class for all expressions
     virtual std::string evaluate() const = 0;
     virtual std::string getExprType() const { return "unknown"; }
     void execute() override { evaluate(); }
 };
 
-// =====================================================================
 // EXPRESSION NODES
-// =====================================================================
 
 class NumberLiteralNode : public ExprNode {
     std::string value;
@@ -280,11 +279,10 @@ public:
     std::string evaluate() const override;
 };
 
-// =====================================================================
 // STATEMENT NODES
-// =====================================================================
 
 class BlockNode : public ASTNode {
+    // just a list of statements
 public:
     std::vector<std::unique_ptr<ASTNode>> statements;
     void execute() override;
@@ -456,11 +454,10 @@ public:
     void execute() override;
 };
 
-// =====================================================================
 // LEXER & PARSER
-// =====================================================================
 
 class Lexer {
+    // chops source code into tokens
     std::string src;
     size_t pos;
     void skipWhitespace();
@@ -472,6 +469,7 @@ public:
 };
 
 class Parser {
+    // builds the AST from tokens
     std::vector<Token> tokens;
     size_t position;
 

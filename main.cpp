@@ -8,11 +8,13 @@
 #include <set>
 #include <cstdlib>
 
+// flags for compiling
 const std::string COMMANDS[] = {"-dump", "-d", "-v", "-version"};
 bool dumpMode = false;
-const std::string VERSION = "Fixed Crits\n\nSilo v1.2.Pisces~HighPriestess_c++17";
+const std::string VERSION = "Silo Taurus-2.2.18~c++17";
 
 void compileCommand(const std::string& cmd) {
+    // check if cmd is a known flag
     auto cc = std::find(std::begin(COMMANDS), std::end(COMMANDS), cmd);
     if (cc != std::end(COMMANDS)) {
         if (*cc == "-dump" || *cc == "-d") dumpMode = true;
@@ -23,12 +25,11 @@ void compileCommand(const std::string& cmd) {
     }
 }
 
-// =====================================================================
 // PREPROCESSOR
-// =====================================================================
 
 // Returns ~/.silo/lib/
 std::string getSiloLibDir() {
+    // grab ~/.silo/lib/ from $HOME
     const char* home = getenv("HOME");
     if (!home)
         throw std::runtime_error("Cannot find HOME directory. Is $HOME set?");
@@ -39,6 +40,7 @@ std::string getSiloLibDir() {
 // <file>  -> looks in ~/.silo/lib/
 // "file"  -> looks relative to the current source file
 std::string preprocess(const std::string& filepath, std::set<std::string>& included) {
+    // handles both <system> and "local" includes
     if (included.count(filepath)) return ""; // already included, skip
     included.insert(filepath);
 
@@ -113,11 +115,10 @@ std::string preprocess(const std::string& filepath, std::set<std::string>& inclu
     return result;
 }
 
-// =====================================================================
 // MAIN
-// =====================================================================
 
 int main(int argc, char* argv[]) {
+    // basic entry point: lex, parse, execute
     clear();
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <source_file> or <power_command>" << std::endl;
@@ -130,7 +131,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Check file exists before preprocessing
+    // make sure the source file is actually there
     {
         std::ifstream check(argv[1]);
         if (!check) {
@@ -145,7 +146,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 1. Preprocessing — resolve all #include directives
+    // pull in any #include'd files first
     std::string source;
     try {
         std::set<std::string> included;
@@ -155,11 +156,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // 2. Lexing
+    // turn source into a token stream
     Lexer lexer(source);
     std::vector<Token> tokens = lexer.tokenize();
 
-    // 3. Parsing & execution
+    // run the program statement by statement
     Parser parser(tokens);
     try {
         while (true) {

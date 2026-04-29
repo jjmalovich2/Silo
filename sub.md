@@ -1,3 +1,920 @@
+# AP CSP Create Task - Program Code
+
+## Anthropic's CLI ClaudeCode was used throughout development, used to fix bugs and optimize parts of the Abstract Syntax Tree. Other CLI AI Agents, like Kimi K2.6, were also used, but barely.
+
+## Part 1: Custom Language Script (The Application)
+This script demonstrates the required logic (List, Procedure, Algorithm) running on my custom interpreter.
+```cpp
+#include <math>
+
+int scores[] = [84, 86, 75, 96, 84, 92, 71, 64, 68, 77];
+
+int countPassing(int threshold) {
+    int count = 0;
+    
+    for (int i = 0; i < scores.size(); i++) {
+        if (scores[i] >= threshold) {
+            count = count + 1;
+        }
+    }
+    return count;
+}
+
+string name = input("What is your name? ");
+int minPassing = input<int>("What is the minimum passing score (int)? ");
+int* minPassing_ptr = @minPassing;
+
+int totalPassing = countPassing(minPassing);
+
+print(f"Name: {name}");
+print(f"Passing Grade: {minPassing}");
+print(f"MemAddr of minPassing: {minPassing_ptr}");
+print(f"Total Passing Grades: {totalPassing}");
+print(f"MemAddr of totalPassing: {@totalPassing}");
+print(f"Average Grade: {avg_int(scores)} (imported from 'math' library)");
+print("Freed Memory by Deleting 'scores' array from Values Table");
+free scores;
+```
+
+## Math Standard Library created in pure Silo: (math.sl)
+```cpp
+double abs(double val) {
+    if (val < 0) { return val - val - val; }
+    return val;
+}
+
+double clamp(double val, double lo, double hi) {
+    if (val < lo) { return lo; }
+    if (val > hi) { return hi; }
+    return val;
+}
+
+double exp(double bs, int ex) {
+    if (ex == 0) { return 1; }
+    double result = 1.0;
+    if (ex > 0) {
+        for (int i = 0; i < ex; i++) {
+            result = result * bs;
+        }
+        return result;
+    } else {
+        int posEx = 0 - ex;
+        for (int i = 0; i < posEx; i++) {
+            result = result * bs;
+        }
+        return 1 / result;
+    }
+    return 0;
+}
+
+double sqrt(double val) {
+    if (val < 0) {
+        print("Cannot sqrt negative number");
+        return -1;
+    }
+    if (val == 0) { return 0; }
+    double guess = val / 2.0;
+    double prev_guess = 0.0;
+    while (abs(guess - prev_guess) >= 0.00001) {
+        prev_guess = guess;
+        guess = 0.5 * (guess + val / guess);
+    }
+    return guess;
+}
+
+double max(double n1, double n2) {
+    if (n1 >= n2) { return n1; }
+    return n2;
+}
+
+double min(double n1, double n2) {
+    if (n1 <= n2) { return n1; }
+    return n2;
+}
+
+double round(double val, int dec) {
+    double factor = exp(10, dec);
+    double shifted = val * factor + 0.5;
+    return shifted / factor;
+}
+
+int floor(double v) {
+    int f = v;
+    return f;
+}
+
+int ceil(double v) {
+    int f = v;
+    if (v - f > 0) { return f + 1; }
+    return f;
+}
+
+int sign(double v) {
+    if (v < 0) { return -1; }
+    if (v == 0) { return 0; }
+    return 1;
+}
+
+bool isEven(int n) {
+    return (n % 2 == 0);
+}
+
+bool isOdd(int n) {
+    return !isEven(n);
+}
+
+double log(double x) {
+    if (x <= 0) { return 0; }
+    double guess = 1.0;
+    double prev = 0.0;
+    for (int i = 0; i < 100; i++) {
+        prev = guess;
+        guess = guess - 1.0 + x / exp(Math.E, cast<int>(guess));
+        if (abs(guess - prev) < 0.00001) { return guess; }
+    }
+    return guess;
+}
+
+double log10(double x) {
+    return log(x) / log(10);
+}
+
+int factorial(int n) {
+    int result = 1;
+    for (int i = 1; i <= n; i++) {
+        result = result * i;
+    }
+    return result;
+}
+
+double toRadians(double deg) {
+    return deg * (Math.PI / 180.0);
+}
+
+double sin(double x) {
+    double result = 0.0;
+    double term = x;
+    int s = 1;
+    for (int i = 1; i < 20; i++) {
+        result = result + s * term;
+        term = term * x * x / ((2 * i) * (2 * i + 1));
+        s = s - s - s;
+    }
+    return result;
+}
+
+double cos(double x) {
+    double result = 1.0;
+    double term = 1.0;
+    int s = 0 - 1;
+    for (int i = 1; i < 20; i++) {
+        term = term * x * x / ((2 * i - 1) * (2 * i));
+        result = result + s * term;
+        s = s - s - s;
+    }
+    return result;
+}
+
+double tan(double x) {
+    return sin(x) / cos(x);
+}
+
+int gcd(int a, int b) {
+    if (a < 0) { a = abs(a); }
+    if (b < 0) { b = abs(b); }
+    while (b != 0) {
+        int temp = b;
+        b = a % b;
+        a = temp;
+    }
+    return a;
+}
+
+int lcm(int a, int b) {
+    return (a / gcd(a, b)) * b;
+}
+
+double lerp(double a, double b, double t) {
+    return a + t * (b - a);
+}
+
+double avg_int(int[] arr) {
+    int result = 0;
+
+    for (int i = 0; i < arr.size(); i++) {
+        result = result + arr[i];
+    }
+    result = result / arr.size();
+    return result;
+}
+```
+
+---
+
+## Part 2: Interpreter Source Code (The Engine)
+
+### silo.h
+```cpp
+#ifndef SILO_H
+#define SILO_H
+
+#include <string>
+#include <vector>
+#include <map>
+#include <set>
+#include <memory>
+#include <iostream>
+#include <functional>
+// Token types the lexer spits out
+
+enum TokenType {
+    // Keywords
+    TypeInt, TypeString, TypeFloat, TypeBool,
+    Return, Print, If, Else, While, For, DoWhile,
+    Break, Continue,
+    True, False,
+    Cast, StaticCast, Free,
+    Class, Constructor, Private, Protected, Global, Void,
+    Self,
+    Struct, Const,
+
+    // Identifiers & Literals
+    Identifier, Number, StringLiteral, FStringLiteral,
+
+    // Operators & Symbols
+    Equals,         // =
+    Plus,           // +
+    Minus,          // -
+    Asterisk,       // *
+    Slash,          // /
+    Percent,        // %
+    PlusPlus,       // ++
+    MinusMinus,     // --
+    PlusEquals,     // +=
+    MinusEquals,    // -=
+    TimesEquals,    // *=
+    DivEquals,      // /=
+    ModEquals,      // %=
+    LeftParen,      // (
+    RightParen,     // )
+    LeftBrace,      // {
+    RightBrace,     // }
+    LeftBracket,    // [
+    RightBracket,   // ]
+    Semicolon,      // ;
+    Comma,          // ,
+    Dot,            // .
+    Tilde,          // ~
+    Arrow,          // ->
+    LessThan,       // <
+    GreaterThan,    // >
+    EqualEqual,     // ==
+    NotEqual,       // !=
+    LessEqual,      // <=
+    GreaterEqual,   // >=
+    AndAnd,         // &&
+    OrOr,           // ||
+    Bang,           // !
+    Ampersand,      // &
+    At,             // @
+
+    EndOfFile
+};
+
+struct Token {
+    TokenType type;
+    std::string value;
+};
+
+// Forward declarations
+struct ASTNode;
+struct ExprNode;
+class BlockNode;
+
+struct FieldDef {
+    // field access level, type, default value, const flag
+    std::string access;   // "private", "protected", "global", "public"
+    std::string type;
+    std::string value;
+    bool isConst = false;
+    std::shared_ptr<ExprNode> initExpr; // stored for deferred evaluation at instantiation
+};
+
+struct MethodDef {
+    // return type, params, body, ctor bindings, parent ctor info
+    std::string returnType;
+    std::vector<std::pair<std::string, std::string>> params;
+    std::shared_ptr<BlockNode> body;
+    std::vector<std::string> constructorBindings;
+    std::string parentConstructorClass;
+    std::vector<std::string> parentConstructorArgs;
+    std::string ownerClass;
+};
+
+struct RuntimeValue {
+    // can be a variable, function, class instance, or array
+    std::string type;
+    std::string value;
+    bool isConst = false;
+    std::vector<std::string> arrayElements;
+
+    std::vector<std::pair<std::string, std::string>> params;
+    std::shared_ptr<ASTNode> body;
+
+    std::string parentClass;
+    std::string instanceOf;
+    std::map<std::string, FieldDef>  fields;
+    std::map<std::string, MethodDef> methods;
+};
+
+extern std::map<std::string, RuntimeValue> SYMBOL_TABLE;
+extern std::string CURRENT_CLASS;
+extern std::string CURRENT_INSTANCE;
+
+void printSymbolTable();
+void clear();
+
+struct ASTNode {
+    // base class for all statements
+    virtual ~ASTNode() = default;
+    virtual void execute() = 0;
+};
+
+struct ExprNode : public ASTNode {
+    // base class for all expressions
+    virtual std::string evaluate() const = 0;
+    virtual std::string getExprType() const { return "unknown"; }
+    void execute() override { evaluate(); }
+};
+
+// EXPRESSION NODES
+
+class NumberLiteralNode : public ExprNode {
+    std::string value;
+public:
+    NumberLiteralNode(const std::string& val);
+    std::string evaluate() const override;
+};
+
+class StringLiteralNode : public ExprNode {
+    std::string value;
+public:
+    StringLiteralNode(const std::string& val);
+    std::string evaluate() const override;
+};
+
+class BooleanLiteralNode : public ExprNode {
+    bool value;
+public:
+    BooleanLiteralNode(bool val);
+    std::string evaluate() const override;
+};
+
+class FStringNode : public ExprNode {
+public:
+    std::vector<std::pair<bool, std::string>> parts;
+    FStringNode(std::vector<std::pair<bool, std::string>> p);
+    std::string evaluate() const override;
+};
+
+class VariableNode : public ExprNode {
+    std::string name;
+public:
+    VariableNode(const std::string& n);
+    std::string evaluate() const override;
+    std::string getName() const { return name; }
+};
+
+class BinaryOpNode : public ExprNode {
+    std::string op;
+    std::unique_ptr<ExprNode> left;
+    std::unique_ptr<ExprNode> right;
+public:
+    BinaryOpNode(std::string op, std::unique_ptr<ExprNode> l, std::unique_ptr<ExprNode> r);
+    std::string evaluate() const override;
+};
+
+class PostfixOpNode : public ExprNode {
+    std::string varName;
+    std::string op;
+public:
+    PostfixOpNode(const std::string& name, const std::string& op);
+    std::string evaluate() const override;
+};
+
+class AssignExprNode : public ExprNode {
+    std::string varName;
+    std::unique_ptr<ExprNode> value;
+public:
+    AssignExprNode(const std::string& name, std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
+class CastOrRefNode : public ExprNode {
+    std::string operation;
+    std::string targetVar;
+public:
+    CastOrRefNode(const std::string& op, const std::string& var);
+    std::string evaluate() const override;
+};
+
+class CastExprNode : public ExprNode {
+    std::string targetType;
+    std::unique_ptr<ExprNode> expr;
+public:
+    CastExprNode(const std::string& t, std::unique_ptr<ExprNode> e);
+    std::string evaluate() const override;
+};
+
+class ArrayAccessNode : public ExprNode {
+    std::string arrayName;
+    std::unique_ptr<ExprNode> indexExpr;
+public:
+    ArrayAccessNode(const std::string& name, std::unique_ptr<ExprNode> idx);
+    std::string evaluate() const override;
+};
+
+class ArrayAssignNode : public ExprNode {
+    std::string arrayName;
+    std::unique_ptr<ExprNode> indexExpr;
+    std::unique_ptr<ExprNode> valueExpr;
+public:
+    ArrayAssignNode(const std::string& name, std::unique_ptr<ExprNode> idx, std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
+class ArrayCompoundAssignNode : public ExprNode {
+    std::string arrayName;
+    std::unique_ptr<ExprNode> indexExpr;
+    std::string op;
+    std::unique_ptr<ExprNode> valueExpr;
+public:
+    ArrayCompoundAssignNode(const std::string& name, std::unique_ptr<ExprNode> idx, std::string op, std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
+class FunctionCallNode : public ExprNode {
+    std::string funcName;
+    std::vector<std::unique_ptr<ExprNode>> args;
+    std::string templateType; // optional type parameter, e.g. input<int>
+public:
+    FunctionCallNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> a,
+                     const std::string& t = "");
+    std::string evaluate() const override;
+    std::string getExprType() const override;
+};
+
+class SelfAccessNode : public ExprNode {
+    std::string memberName;
+    bool isCall;
+    std::vector<std::unique_ptr<ExprNode>> callArgs;
+public:
+    SelfAccessNode(const std::string& member, bool isCall,
+                   std::vector<std::unique_ptr<ExprNode>> args = {});
+    std::string evaluate() const override;
+};
+
+class MemberAccessNode : public ExprNode {
+    std::string instanceName;
+    std::string memberName;
+    bool isCall;
+    std::vector<std::unique_ptr<ExprNode>> callArgs;
+public:
+    MemberAccessNode(const std::string& inst, const std::string& member,
+                     bool isCall, std::vector<std::unique_ptr<ExprNode>> args = {});
+    std::string evaluate() const override;
+    std::string getExprType() const override;
+};
+
+class MemberAssignNode : public ExprNode {
+    std::string instanceName;
+    std::string fieldName;
+    std::unique_ptr<ExprNode> value;
+public:
+    MemberAssignNode(const std::string& inst, const std::string& field,
+                     std::unique_ptr<ExprNode> val);
+    std::string evaluate() const override;
+};
+
+// STATEMENT NODES
+
+class BlockNode : public ASTNode {
+    // just a list of statements
+public:
+    std::vector<std::unique_ptr<ASTNode>> statements;
+    void execute() override;
+};
+
+class VarDeclarationNode : public ASTNode {
+    std::string baseType;
+    bool isPointer;
+    bool isConst;
+    std::string identifier;
+    std::unique_ptr<ExprNode> initializer;
+public:
+    VarDeclarationNode(const std::string& t, bool p, bool c,
+                       const std::string& id, std::unique_ptr<ExprNode> init);
+    void execute() override;
+};
+
+class ArrayDeclarationNode : public ASTNode {
+    std::string type;
+    std::string name;
+    int size;
+    std::vector<std::unique_ptr<ExprNode>> initializers;
+public:
+    ArrayDeclarationNode(const std::string& t, const std::string& n, int s,
+                         std::vector<std::unique_ptr<ExprNode>> inits = {});
+    void execute() override;
+};
+
+class ArrayLiteralNode : public ExprNode {
+    std::vector<std::unique_ptr<ExprNode>> elements;
+public:
+    ArrayLiteralNode(std::vector<std::unique_ptr<ExprNode>> elems);
+    std::string evaluate() const override;
+    const std::vector<std::unique_ptr<ExprNode>>& getElements() const { return elements; }
+};
+
+class ArrayReassignNode : public ExprNode {
+    std::string arrayName;
+    std::vector<std::unique_ptr<ExprNode>> elements;
+public:
+    ArrayReassignNode(const std::string& name, std::vector<std::unique_ptr<ExprNode>> elems);
+    std::string evaluate() const override;
+};
+
+class RetypeNode : public ASTNode {
+    std::string newType;
+    std::string targetVar;
+public:
+    RetypeNode(const std::string& t, const std::string& v);
+    void execute() override;
+};
+
+class PrintNode : public ASTNode {
+    std::unique_ptr<ExprNode> expression;
+public:
+    PrintNode(std::unique_ptr<ExprNode> expr);
+    void execute() override;
+};
+
+class ReturnNode : public ASTNode {
+    std::unique_ptr<ExprNode> value;
+public:
+    ReturnNode(std::unique_ptr<ExprNode> v);
+    void execute() override;
+};
+
+class FreeNode : public ASTNode {
+    std::string identifier;
+public:
+    FreeNode(const std::string& id);
+    void execute() override;
+};
+
+class BreakNode : public ASTNode {
+public:
+    void execute() override;
+};
+
+class ContinueNode : public ASTNode {
+public:
+    void execute() override;
+};
+
+class IfNode : public ASTNode {
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<BlockNode> thenBlock;
+    std::vector<std::pair<std::unique_ptr<ExprNode>, std::unique_ptr<BlockNode>>> elseIfBlocks;
+    std::unique_ptr<BlockNode> elseBlock;
+public:
+    IfNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> thenB);
+    void addElseIf(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> block);
+    void setElse(std::unique_ptr<BlockNode> block);
+    void execute() override;
+};
+
+class WhileNode : public ASTNode {
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<BlockNode> body;
+public:
+    WhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b);
+    void execute() override;
+};
+
+class DoWhileNode : public ASTNode {
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<BlockNode> body;
+public:
+    DoWhileNode(std::unique_ptr<ExprNode> cond, std::unique_ptr<BlockNode> b);
+    void execute() override;
+};
+
+class ForNode : public ASTNode {
+    std::unique_ptr<ASTNode> init;
+    std::unique_ptr<ExprNode> condition;
+    std::unique_ptr<ExprNode> increment;
+    std::unique_ptr<BlockNode> body;
+public:
+    ForNode(std::unique_ptr<ASTNode> init, std::unique_ptr<ExprNode> cond,
+            std::unique_ptr<ExprNode> inc, std::unique_ptr<BlockNode> b);
+    void execute() override;
+};
+
+class FunctionDefNode : public ASTNode {
+    std::string returnType;
+    std::string name;
+    std::vector<std::pair<std::string, std::string>> params;
+    std::shared_ptr<BlockNode> body;
+public:
+    FunctionDefNode(const std::string& rt, const std::string& n,
+                    const std::vector<std::pair<std::string, std::string>> p,
+                    std::shared_ptr<BlockNode> b);
+    void execute() override;
+};
+
+class ClassDefNode : public ASTNode {
+    std::string className;
+    std::string parentName;
+    std::map<std::string, FieldDef>  fields;
+    std::map<std::string, MethodDef> methods;
+public:
+    ClassDefNode(const std::string& name, const std::string& parent,
+                 std::map<std::string, FieldDef> f,
+                 std::map<std::string, MethodDef> m);
+    void execute() override;
+};
+
+class StructDefNode : public ASTNode {
+    std::string structName;
+    std::map<std::string, FieldDef> fields;
+public:
+    StructDefNode(const std::string& name, std::map<std::string, FieldDef> f);
+    void execute() override;
+};
+
+class InstanceCreateNode : public ASTNode {
+    std::string className;
+    std::string instanceName;
+    std::vector<std::unique_ptr<ExprNode>> args;
+public:
+    InstanceCreateNode(const std::string& cls, const std::string& inst,
+                       std::vector<std::unique_ptr<ExprNode>> a);
+    void execute() override;
+};
+
+class MemberAccessStatement : public ASTNode {
+    std::unique_ptr<MemberAccessNode> node;
+public:
+    MemberAccessStatement(std::unique_ptr<MemberAccessNode> n);
+    void execute() override;
+};
+
+// LEXER & PARSER
+
+class Lexer {
+    // chops source code into tokens
+    std::string src;
+    size_t pos;
+    void skipWhitespace();
+    Token nextToken();
+    char peek();
+public:
+    Lexer(const std::string& source);
+    std::vector<Token> tokenize();
+};
+
+class Parser {
+    // builds the AST from tokens
+    std::vector<Token> tokens;
+    size_t position;
+
+    Token peek();
+    Token advance();
+    Token consume(TokenType type, const std::string& err);
+    std::string parseTypeName();
+
+public:
+    Parser(const std::vector<Token>& toks);
+
+    std::unique_ptr<ExprNode> parsePrimary();
+    std::unique_ptr<ExprNode> parsePostfix();
+    std::unique_ptr<ExprNode> parseTerm();
+    std::unique_ptr<ExprNode> parseExpression();
+    std::unique_ptr<ExprNode> parseComparison();
+    std::unique_ptr<ExprNode> parseLogicalAnd();
+    std::unique_ptr<ExprNode> parseLogicalOr();
+
+    std::unique_ptr<BlockNode> parseBlock();
+    std::unique_ptr<ASTNode>   parseStatement();
+    std::unique_ptr<ASTNode>   parseClassDef();
+    std::unique_ptr<ASTNode>   parseStructDef();
+};
+
+#endif
+```
+
+### lexer.cpp
+```cpp
+#include "silo.h"
+#include <cctype>
+#include <stdexcept>
+
+Lexer::Lexer(const std::string& source) : src(source), pos(0) {}
+
+char Lexer::peek() {
+    // look at current char without moving
+    return (pos < src.size()) ? src[pos] : '\0';
+}
+
+void Lexer::skipWhitespace() {
+    // ignore spaces, tabs, and // comments
+    while (pos < src.size()) {
+        if (std::isspace((unsigned char)src[pos])) {
+            pos++;
+        } else if (src[pos] == '/' && pos + 1 < src.size() && src[pos + 1] == '/') {
+            while (pos < src.size() && src[pos] != '\n') pos++;
+        } else {
+            break;
+        }
+    }
+}
+
+Token Lexer::nextToken() {
+    // figure out what the next token is
+    skipWhitespace();
+    if (pos >= src.size()) return {TokenType::EndOfFile, ""};
+
+    char c = src[pos];
+
+    // handle f-strings
+    if (c == 'f' && pos + 1 < src.size() && src[pos + 1] == '"') {
+        pos += 2;
+        std::string val;
+        while (pos < src.size() && src[pos] != '"') {
+            if (src[pos] == '\\' && pos + 1 < src.size()) {
+                pos++;
+                switch (src[pos]) {
+                    case 'n':  val += '\n'; break;
+                    case 't':  val += '\t'; break;
+                    case '"':  val += '"';  break;
+                    case '\\': val += '\\'; break;
+                    default:   val += src[pos]; break;
+                }
+                pos++;
+            } else {
+                val += src[pos++];
+            }
+        }
+        if (pos < src.size()) pos++;
+        return {TokenType::FStringLiteral, val};
+    }
+
+    // regular double-quoted string
+    if (c == '"') {
+        pos++;
+        std::string val;
+        while (pos < src.size() && src[pos] != '"') {
+            if (src[pos] == '\\' && pos + 1 < src.size()) {
+                pos++;
+                switch (src[pos]) {
+                    case 'n':  val += '\n'; break;
+                    case 't':  val += '\t'; break;
+                    case '"':  val += '"';  break;
+                    case '\\': val += '\\'; break;
+                    default:   val += src[pos]; break;
+                }
+                pos++;
+            } else {
+                val += src[pos++];
+            }
+        }
+        if (pos < src.size()) pos++;
+        return {TokenType::StringLiteral, val};
+    }
+
+    // integers or floats
+    if (std::isdigit((unsigned char)c)) {
+        std::string val;
+        bool hasDot = false;
+        while (pos < src.size() &&
+               (std::isdigit((unsigned char)src[pos]) || (src[pos] == '.' && !hasDot))) {
+            if (src[pos] == '.') hasDot = true;
+            val += src[pos++];
+        }
+        return {TokenType::Number, val};
+    }
+
+    // check if it matches a reserved word
+    if (std::isalpha((unsigned char)c) || c == '_') {
+        std::string val;
+        while (pos < src.size() &&
+               (std::isalnum((unsigned char)src[pos]) || src[pos] == '_')) {
+            val += src[pos++];
+        }
+        // turn the value into a token, probably a better way to do 
+        // this but this works and im not gonna change it
+        if (val == "int")         return {TokenType::TypeInt,     val};
+        if (val == "string")      return {TokenType::TypeString,  val};
+        if (val == "float")       return {TokenType::TypeFloat,   val};
+        if (val == "double")      return {TokenType::TypeFloat,   val};
+        if (val == "bool")        return {TokenType::TypeBool,    val};
+        if (val == "void")        return {TokenType::Void,        val};
+        if (val == "return")      return {TokenType::Return,      val};
+        if (val == "if")          return {TokenType::If,          val};
+        if (val == "else")        return {TokenType::Else,        val};
+        if (val == "while")       return {TokenType::While,       val};
+        if (val == "for")         return {TokenType::For,         val};
+        if (val == "do")          return {TokenType::DoWhile,     val};
+        if (val == "break")       return {TokenType::Break,       val};
+        if (val == "continue")    return {TokenType::Continue,    val};
+        if (val == "true")        return {TokenType::True,        val};
+        if (val == "false")       return {TokenType::False,       val};
+        if (val == "cast")        return {TokenType::Cast,        val};
+        if (val == "static_cast") return {TokenType::StaticCast,  val};
+        if (val == "free")        return {TokenType::Free,        val};
+        if (val == "class")       return {TokenType::Class,       val};
+        if (val == "constructor") return {TokenType::Constructor, val};
+        if (val == "private")     return {TokenType::Private,     val};
+        if (val == "protected")   return {TokenType::Protected,   val};
+        if (val == "global")      return {TokenType::Global,      val};
+        if (val == "self")        return {TokenType::Self,        val};
+        if (val == "struct")      return {TokenType::Struct,      val};
+        if (val == "const")       return {TokenType::Const,       val};
+        return {TokenType::Identifier, val};
+    }
+
+    pos++;
+
+    // single-char tokens and multi-char operators
+    switch (c) {
+        case '+':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::PlusEquals,  "+="}; }
+            if (pos < src.size() && src[pos] == '+') { pos++; return {TokenType::PlusPlus,     "++"}; }
+            return {TokenType::Plus, "+"};
+        case '-':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::MinusEquals,  "-="}; }
+            if (pos < src.size() && src[pos] == '-') { pos++; return {TokenType::MinusMinus,    "--"}; }
+            if (pos < src.size() && src[pos] == '>') { pos++; return {TokenType::Arrow,         "->"}; }
+            return {TokenType::Minus, "-"};
+        case '*':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::TimesEquals,  "*="}; }
+            return {TokenType::Asterisk, "*"};
+        case '/':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::DivEquals,    "/="}; }
+            return {TokenType::Slash, "/"};
+        case '%':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::ModEquals,    "%="}; }
+            return {TokenType::Percent, "%"};
+        case '=':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::EqualEqual,   "=="}; }
+            return {TokenType::Equals, "="};
+        case '!':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::NotEqual,     "!="}; }
+            return {TokenType::Bang, "!"};
+        case '<':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::LessEqual,    "<="}; }
+            return {TokenType::LessThan, "<"};
+        case '>':
+            if (pos < src.size() && src[pos] == '=') { pos++; return {TokenType::GreaterEqual, ">="}; }
+            return {TokenType::GreaterThan, ">"};
+        case '&':
+            if (pos < src.size() && src[pos] == '&') { pos++; return {TokenType::AndAnd, "&&"}; }
+            return {TokenType::Ampersand, "&"};
+        case '|':
+            if (pos < src.size() && src[pos] == '|') { pos++; return {TokenType::OrOr, "||"}; }
+            return nextToken();
+        case '(': return {TokenType::LeftParen,    "("};
+        case ')': return {TokenType::RightParen,   ")"};
+        case '{': return {TokenType::LeftBrace,    "{"};
+        case '}': return {TokenType::RightBrace,   "}"};
+        case '[': return {TokenType::LeftBracket,  "["};
+        case ']': return {TokenType::RightBracket, "]"};
+        case ';': return {TokenType::Semicolon,    ";"};
+        case ',': return {TokenType::Comma,        ","};
+        case '.': return {TokenType::Dot,          "."};
+        case '~': return {TokenType::Tilde,        "~"};
+        case '@': return {TokenType::At,           "@"};
+        default:  return nextToken(); // skip unknown chars
+    }
+}
+
+std::vector<Token> Lexer::tokenize() {
+    // keep grabbing tokens until EOF
+    std::vector<Token> tokens;
+    while (true) {
+        Token t = nextToken();
+        if (t.type == TokenType::EndOfFile) break;
+        tokens.push_back(t);
+    }
+    tokens.push_back({TokenType::EndOfFile, ""});
+    return tokens;
+}
+```
+
+### AST.cpp
+```cpp
 #include "silo.h"
 #include <iostream>
 #include <sstream>
@@ -2272,3 +3189,186 @@ std::unique_ptr<ASTNode> Parser::parseStatement() {
 
     return nullptr;
 }
+```
+
+### main.cpp
+```cpp
+#include "silo.h"
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+#include <vector>
+#include <stdexcept>
+#include <set>
+#include <cstdlib>
+
+// flags for compiling
+const std::string COMMANDS[] = {"-dump", "-d", "-v", "-version"};
+bool dumpMode = false;
+const std::string VERSION = "Silo Taurus-2.2.18~c++17";
+
+void compileCommand(const std::string& cmd) {
+    // check if cmd is a known flag
+    auto cc = std::find(std::begin(COMMANDS), std::end(COMMANDS), cmd);
+    if (cc != std::end(COMMANDS)) {
+        if (*cc == "-dump" || *cc == "-d") dumpMode = true;
+        if (*cc == "-v" || *cc == "-version") std::cout << VERSION << std::endl << std::endl;
+    } else {
+        std::cerr << "Unknown command: " << cmd << std::endl;
+        return;
+    }
+}
+
+// PREPROCESSOR
+
+// Returns ~/.silo/lib/
+std::string getSiloLibDir() {
+    // grab ~/.silo/lib/ from $HOME
+    const char* home = getenv("HOME");
+    if (!home)
+        throw std::runtime_error("Cannot find HOME directory. Is $HOME set?");
+    return std::string(home) + "/.silo/lib/";
+}
+
+// Recursively preprocesses a .sl file, resolving all #include directives.
+// <file>  -> looks in ~/.silo/lib/
+// "file"  -> looks relative to the current source file
+std::string preprocess(const std::string& filepath, std::set<std::string>& included) {
+    // handles both <system> and "local" includes
+    if (included.count(filepath)) return ""; // already included, skip
+    included.insert(filepath);
+
+    std::ifstream file(filepath);
+    if (!file)
+        throw std::runtime_error("Cannot open file: " + filepath);
+
+    // Base directory of this file (for resolving local "" includes)
+    std::string baseDir = "";
+    size_t lastSlash = filepath.find_last_of("/\\");
+    if (lastSlash != std::string::npos)
+        baseDir = filepath.substr(0, lastSlash + 1);
+
+    std::string result;
+    std::string line;
+    int lineNum = 0;
+
+    while (std::getline(file, line)) {
+        lineNum++;
+
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos) { result += "\n"; continue; }
+        std::string trimmed = line.substr(start);
+
+        if (trimmed.rfind("#include", 0) == 0) {
+            size_t i = 8; // skip "#include"
+            while (i < trimmed.size() && trimmed[i] == ' ') i++;
+
+            if (i >= trimmed.size())
+                throw std::runtime_error("Empty #include on line "
+                                         + std::to_string(lineNum)
+                                         + " of " + filepath);
+
+            char openChar  = trimmed[i];
+            char closeChar = (openChar == '<') ? '>' : '"';
+
+            if (openChar != '<' && openChar != '"')
+                throw std::runtime_error("Malformed #include on line "
+                                         + std::to_string(lineNum)
+                                         + " of " + filepath
+                                         + " — expected < or \"");
+
+            size_t nameStart = i + 1;
+            size_t nameEnd   = trimmed.find(closeChar, nameStart);
+            if (nameEnd == std::string::npos)
+                throw std::runtime_error("Unclosed #include on line "
+                                         + std::to_string(lineNum)
+                                         + " of " + filepath);
+
+            std::string name = trimmed.substr(nameStart, nameEnd - nameStart);
+
+            // Add .sl if no extension provided
+            if (name.find('.') == std::string::npos)
+                name += ".sl";
+
+            std::string includePath;
+            if (openChar == '<') {
+                // System library: ~/.silo/lib/
+                includePath = getSiloLibDir() + name;
+            } else {
+                // Local file: relative to the current source file
+                includePath = baseDir + name;
+            }
+
+            result += preprocess(includePath, included);
+            result += "\n";
+        } else {
+            result += line + "\n";
+        }
+    }
+
+    return result;
+}
+
+// MAIN
+
+int main(int argc, char* argv[]) {
+    // basic entry point: lex, parse, execute
+    clear();
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <source_file> or <power_command>" << std::endl;
+        return 1;
+    }
+
+    // Check for power commands first
+    if (std::string(argv[1]) == "-v" || std::string(argv[1]) == "-version") {
+        std::cout << VERSION << std::endl;
+        return 0;
+    }
+
+    // make sure the source file is actually there
+    {
+        std::ifstream check(argv[1]);
+        if (!check) {
+            std::cerr << "Error: Could not open file " << argv[1] << std::endl;
+            return 1;
+        }
+    }
+
+    if (argc > 2) {
+        for (int i = 2; i < argc; i++) {
+            compileCommand(argv[i]);
+        }
+    }
+
+    // pull in any #include'd files first
+    std::string source;
+    try {
+        std::set<std::string> included;
+        source = preprocess(std::string(argv[1]), included);
+    } catch (const std::exception& e) {
+        std::cerr << "[!] Preprocessor Error: " << e.what() << std::endl;
+        return 1;
+    }
+
+    // turn source into a token stream
+    Lexer lexer(source);
+    std::vector<Token> tokens = lexer.tokenize();
+
+    // run the program statement by statement
+    Parser parser(tokens);
+    try {
+        while (true) {
+            auto stmt = parser.parseStatement();
+            if (!stmt) break;
+            stmt->execute();
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[!] Runtime/Parsing Error: " << e.what() << std::endl;
+        return 1;
+    }
+
+    if (dumpMode) printSymbolTable();
+    return 0;
+}
+```
